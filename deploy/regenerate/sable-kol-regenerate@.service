@@ -6,7 +6,9 @@ Wants=network-online.target
 
 # Production install layout (Hetzner CX21):
 #   /opt/sable/sable-kol/                — checkout of this repo
-#   /opt/sable/sable-kol/.venv/          — Python venv with sable-kol installed
+#   /opt/sable/venv/                      — SHARED venv (sable-platform +
+#                                           sable + sable-kol all installed
+#                                           here; no nested .venv per repo)
 #   /opt/sable/clients/<id>.yaml          — per-client configs (read-only)
 #   /opt/sable/outreach/<id>/             — outreach artifacts (writable)
 #   /var/log/sable-kol/regenerate-<id>.log — JSON summary per run
@@ -46,7 +48,7 @@ EnvironmentFile=/etc/sable/sable-kol-regenerate.env
 WorkingDirectory=/opt/sable/sable-kol
 
 # Single command. --json so systemd journal captures structured output.
-ExecStart=/opt/sable/sable-kol/.venv/bin/sable-kol regenerate %i --json
+ExecStart=/opt/sable/venv/bin/sable-kol regenerate %i --json
 
 # Hard timeout — Anthropic rate-limits can stretch classify; allocate room
 # but cap so a stuck run doesn't hold the next timer.
