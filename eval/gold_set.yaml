@@ -1,0 +1,38 @@
+# Gold set for SableKOL eval.
+#
+# Five projects × 20 known-good KOLs each. Operator-curated. If a KOL doesn't
+# appear in the matcher's top-50 result for the project they're listed under,
+# either the bank is missing them (ingest gap) OR the scoring is wrong.
+#
+# Evaluation splits into:
+#   - bank coverage = % of gold-set rows present in kol_candidates at all
+#   - ranker recall = top-N over the in-bank subset
+#
+# Add real handles below. Comment lines (#) and empty handle lists are tolerated.
+
+projects:
+  - org_id: tig
+    description: "TIG Foundation — DeSci, growth stage"
+    kols: []
+      # - alice
+      # - bob
+      # - …
+
+  - org_id: multisynq
+    description: "Multisynq — Infra, growth stage"
+    kols: []
+
+  - external_handle: example_defi
+    sector: DeFi
+    description: "Example DeFi prospect — RWA yield aggregator"
+    kols: []
+
+  - external_handle: example_gaming
+    sector: Gaming
+    description: "Example Gaming prospect"
+    kols: []
+
+  - external_handle: example_solana_infra
+    sector: Infrastructure
+    description: "Example Solana infra project"
+    kols: []

@@ -1,0 +1,86 @@
+{
+  "_note": "Trimmed page-1 fixture from /twitter/followers/list spike \u2014 see docs/socialdata_contract_spike_*.md",
+  "users": [
+    {
+      "id": 329997605,
+      "id_str": "329997605",
+      "screen_name": "uhhlivveeuuhh",
+      "name": "Liv",
+      "description": "VCU Alumna Fashion enthusiast & Freelance writer",
+      "followers_count": 441,
+      "friends_count": 1235,
+      "statuses_count": 29939,
+      "verified": false,
+      "protected": false,
+      "created_at": "2011-07-05T23:12:01.000000Z",
+      "location": "NOVA\ud83d\udccd",
+      "listed_count": 4
+    },
+    {
+      "id": 1479043645651230731,
+      "id_str": "1479043645651230731",
+      "screen_name": "MaryCo88",
+      "name": "Mary Mary",
+      "description": "",
+      "followers_count": 14,
+      "friends_count": 704,
+      "statuses_count": 499,
+      "verified": false,
+      "protected": false,
+      "created_at": "2022-01-06T10:55:22.000000Z",
+      "location": "",
+      "listed_count": 0
+    },
+    {
+      "id": 39876652,
+      "id_str": "39876652",
+      "screen_name": "macedodouglas13",
+      "name": "doug | \ud83d\udcb2pior gay do Br\ud83c\udde7\ud83c\uddf7",
+      "description": "| solteiro | servidor\ud83d\udd75\ud83c\udffb\u200d\u2642\ufe0f | universit\u00e1rio\n| bullet proof soul | G\ud83c\udff3\ufe0f\u200d\ud83c\udf08\n| dono de i30\n| HARRY STYLES 07/26\ud83d\udd7a\ud83c\udffb\n| SLAyyyTER 10/26 \ud83d\udc30",
+      "followers_count": 1221,
+      "friends_count": 481,
+      "statuses_count": 130049,
+      "verified": false,
+      "protected": false,
+      "created_at": "2009-05-14T00:07:10.000000Z",
+      "location": "S\u00e3o Paulo",
+      "listed_count": 14
+    },
+    {
+      "id": 976143738,
+      "id_str": "976143738",
+      "screen_name": "veslovodroflow",
+      "name": "veslovodroflow",
+      "description": "",
+      "followers_count": 2,
+      "friends_count": 136,
+      "statuses_count": 3,
+      "verified": false,
+      "protected": false,
+      "created_at": "2012-11-28T13:42:51.000000Z",
+      "location": "",
+      "listed_count": 0
+    },
+    {
+      "id": 1698039883259052032,
+      "id_str": "1698039883259052032",
+      "screen_name": "uiarafat54",
+      "name": "Md Arafat Rahman",
+      "description": "UI/UX Designer & Frontend Developer | Crafting Modern Web, Mobile & Landing Page Experiences",
+      "followers_count": 158,
+      "friends_count": 1758,
+      "statuses_count": 573,
+      "verified": false,
+      "protected": false,
+      "created_at": "2023-09-02T18:27:26.000000Z",
+      "location": "",
+      "listed_count": 1
+    }
+  ],
+  "users_returned_full_page": 49,
+  "top_level_keys": [
+    "next_cursor",
+    "users"
+  ],
+  "next_cursor_repr": "'1858665836392304137|2052176197441290189'"
+}

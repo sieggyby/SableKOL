@@ -1,0 +1,24 @@
+[Unit]
+Description=Daily SableKOL deliverable refresh for client %i
+Documentation=https://github.com/sieggyby/SableKOL/blob/main/docs/sableweb_kol_build_plan.md
+
+[Timer]
+# 03:00 UTC daily. Per build plan: refresh well before any operator
+# window opens, well after midnight USA-east traffic settles.
+OnCalendar=*-*-* 03:00:00 UTC
+
+# If the system was off at 03:00, run on next boot instead of skipping.
+Persistent=true
+
+# Stagger 0-300s so multiple per-client timers don't stampede the
+# Anthropic API or contend on Postgres at the exact same instant.
+RandomizedDelaySec=300
+
+# Pair with the @.service of the same instance name.
+Unit=sable-kol-regenerate@%i.service
+
+# So `systemctl list-timers` shows it.
+AccuracySec=1min
+
+[Install]
+WantedBy=timers.target

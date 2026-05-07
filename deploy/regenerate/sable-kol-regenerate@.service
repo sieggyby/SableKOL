@@ -1,0 +1,57 @@
+[Unit]
+Description=SableKOL — refresh deliverables for client %i (no SocialData spend)
+Documentation=https://github.com/sieggyby/SableKOL/blob/main/docs/sableweb_kol_build_plan.md
+After=network-online.target
+Wants=network-online.target
+
+# Production install layout (Hetzner CX21):
+#   /opt/sable/sable-kol/                — checkout of this repo
+#   /opt/sable/sable-kol/.venv/          — Python venv with sable-kol installed
+#   /opt/sable/clients/<id>.yaml          — per-client configs (read-only)
+#   /opt/sable/outreach/<id>/             — outreach artifacts (writable)
+#   /var/log/sable-kol/regenerate-<id>.log — JSON summary per run
+#
+# Operator install steps:
+#   1. Copy this file + the timer to /etc/systemd/system/
+#   2. systemctl daemon-reload
+#   3. systemctl enable --now sable-kol-regenerate@solstitch.timer
+#   4. journalctl -u sable-kol-regenerate@solstitch.service -f to watch
+#
+# Client_id (the %i specifier) MUST match a YAML at /opt/sable/clients/<id>.yaml.
+
+[Service]
+Type=oneshot
+User=sable
+Group=sable
+
+# Where the CLI lives. Change SABLEKOL_HOME if your install differs.
+Environment=SABLEKOL_HOME=/opt/sable/sable-kol
+Environment=SABLE_DATABASE_URL=postgresql://...your-prod-pg-url...
+Environment=ANTHROPIC_API_KEY=...load-from-vault...
+Environment=PYTHONUNBUFFERED=1
+
+WorkingDirectory=/opt/sable/sable-kol
+
+# Single command. --json so systemd journal captures structured output.
+ExecStart=/opt/sable/sable-kol/.venv/bin/sable-kol regenerate %i --json
+
+# Hard timeout — Anthropic rate-limits can stretch classify; allocate room
+# but cap so a stuck run doesn't hold the next timer.
+TimeoutStartSec=2h
+
+# Hardening (Hetzner deploy/DEPLOY.md pattern).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sable/outreach /var/log/sable-kol
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+
+# Don't restart on failure — the timer fires daily, no need to thrash.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

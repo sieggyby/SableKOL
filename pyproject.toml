@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sable-kol"
+version = "0.1.0"
+description = "SableKOL — bank-backed KOL discovery and matching for Sable clients/prospects"
+requires-python = ">=3.11"
+dependencies = [
+    "sable-platform @ file:///Users/sieggy/Projects/SablePlatform",
+    "anthropic>=0.40",
+    "click>=8.0",
+    "httpx>=0.27",
+    "pydantic>=2.0",
+    "pyyaml>=6.0",
+    "beautifulsoup4>=4.12",
+]
+
+[project.optional-dependencies]
+# Slopper's pyproject declares name = "sable" (not sable-slopper).
+# Required for --paid-enrich (SocialData calls via sable.shared.socialdata)
+# and Phase 2 watchlist sync (sable.pulse.meta.watchlist).
+paid-enrich = [
+    "sable @ file:///Users/sieggy/Projects/Sable_Slopper",
+]
+
+[project.scripts]
+sable-kol = "sable_kol.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["sable_kol*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
