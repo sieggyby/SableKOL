@@ -26,9 +26,22 @@ Group=sable
 
 # Where the CLI lives. Change SABLEKOL_HOME if your install differs.
 Environment=SABLEKOL_HOME=/opt/sable/sable-kol
-Environment=SABLE_DATABASE_URL=postgresql://...your-prod-pg-url...
-Environment=ANTHROPIC_API_KEY=...load-from-vault...
 Environment=PYTHONUNBUFFERED=1
+
+# Secrets — ANTHROPIC_API_KEY + SABLE_DATABASE_URL — live in a separate
+# root-owned file so they never appear in the unit you might version-
+# control. Create it once on the box:
+#
+#   sudo install -d -m 0750 /etc/sable
+#   sudo tee /etc/sable/sable-kol-regenerate.env >/dev/null <<'EOF'
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   SABLE_DATABASE_URL=postgresql://sable:...@127.0.0.1:5432/sable
+#   EOF
+#   sudo chmod 0600 /etc/sable/sable-kol-regenerate.env
+#   sudo chown root:sable /etc/sable/sable-kol-regenerate.env
+#
+# Then reload systemd: `sudo systemctl daemon-reload`.
+EnvironmentFile=/etc/sable/sable-kol-regenerate.env
 
 WorkingDirectory=/opt/sable/sable-kol
 
