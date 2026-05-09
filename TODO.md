@@ -2,7 +2,7 @@
 
 **Source of truth:** `docs/any_project_wizard_plan.md` (v3, Codex-audited round 2). Read this BEFORE doing any work. Every task below references a section.
 
-**Last updated:** 2026-05-09, post Phase A landing.
+**Last updated:** 2026-05-09, post Phase B landing.
 
 **Scope:** This TODO tracks implementation of the any-project KOL wizard ONLY. It is NOT the global "what's next" tracker — for that, see `~/Projects/Sable_Slopper/TODO.md` per existing convention.
 
@@ -11,11 +11,13 @@
 ## Status
 
 - [x] **Pre-flight** — committed 2026-05-08 (`73b69e6`, `6ae2992`)
-- [x] **Phase A — Foundation** — committed 2026-05-08, Sieggy review pending before Phase B
+- [x] **Phase A — Foundation** — committed 2026-05-08, reviewed + greenlit
    - SablePlatform `b0a08b5` — migration 040 (1224 tests pass)
    - SableWeb `2322322` — allowlist + edge gate + button stub (165 tests pass)
-- [ ] **Phase B — Grok sidecar + preflight CLI** — NEXT
-- [ ] Phase C — Claim helper + worker + reuse logic
+- [x] **Phase B — Grok sidecar + preflight CLI** — committed 2026-05-09, greenlit
+   - SableKOL `e32b428` — grok_api + preflight_service + schemas + CLI + Dockerfile + SIDECAR.md (36 new tests, 240 total pass)
+   - SableWeb `74ac672` — docker-compose.yml sidecar block + DEPLOYMENT.md env docs
+- [ ] **Phase C — Claim helper + worker + reuse logic** — NEXT
 - [ ] Phase D — Wizard UI + status page
 
 ---
@@ -64,29 +66,40 @@ NOT YET deployed to prod. Three repos to roll forward in order: SablePlatform �
 
 ---
 
-## Phase B — Grok service (sidecar container) + preflight CLI (~1 day)
+## Phase B — Grok service (sidecar container) + preflight CLI ✅ DONE 2026-05-09
 
 Plan section: "Grok API integration — explicit boundary".
 
-### SableKOL
-- [ ] Create `sable_kol/grok_api.py` — pure xAI client. Two functions: `enrich_handle(handle)`, `suggest_comparable_projects(handle, themes)`. Both return Pydantic-validated dicts.
-- [ ] Create `sable_kol/preflight_service.py` — FastAPI app on `0.0.0.0:8001` (inside-container bind). Three endpoints: `POST /preflight`, `POST /suggest-comparable`, `POST /reuse-check`. All gated by `X-Sable-Service-Token` header.
-- [ ] Add `sable-kol preflight <handle>` CLI subcommand — calls `enrich_handle` directly, prints what wizard would pre-fill. No DB writes, no service required.
-- [ ] Define Pydantic response schemas with `signal_metadata` block (source, model, fetched_at_utc, signal_type, caveat).
-- [ ] Create `Dockerfile.preflight` for the sidecar image. Minimal Python 3.12 slim; pip-install `sable_kol[paid-enrich]`; entry point uvicorn.
-- [ ] CI build + push pipeline (or manual `docker build -t sable-kol-preflight:latest .` for v1).
+### SableKOL (commit `e32b428`)
+- [x] `sable_kol/grok_api.py` — pure xAI client. `enrich_handle(handle)`, `suggest_comparable_projects(handle, themes)`, `build_preflight_response(handle)`, `build_suggest_comparable_response(handle, themes)`. Pydantic-validated. Retry/backoff on 5xx + 429. GrokAuthError / GrokAPIError / GrokParseError taxonomy maps to sidecar 503/502.
+- [x] `sable_kol/preflight_service.py` — FastAPI on `0.0.0.0:8001`. POST /preflight, /suggest-comparable, /reuse-check. Token-free /healthz for compose healthcheck. `secrets.compare_digest` token gate. Hard-fails 503 on missing `SABLE_SERVICE_TOKEN`. `cohorts_to_fetch` dual-driver (`?` positional + ISO-8601 string comparison).
+- [x] `sable-kol preflight <handle>` CLI — `--enrich-only` and `--themes` flags. Prints JSON dump of what the wizard would pre-fill. No DB writes.
+- [x] `sable_kol/preflight_schemas.py` — SignalMetadata, AxisPair, ComparableProject, EnrichedHandle, PreflightResponse, ReuseCheck request/response. `signal_metadata` carries source/model/fetched_at_utc/signal_type/caveat.
+- [x] `Dockerfile.preflight` — Python 3.12 slim. Builds from parent of SableKOL+SablePlatform. Installs SP editable + `sable-kol[service]`. uvicorn entrypoint, healthcheck against /healthz.
+- [x] `pyproject.toml` `[service]` extra — `fastapi>=0.110`, `uvicorn[standard]>=0.27`.
+- [x] `deploy/SIDECAR.md` — build / first-deploy / token-rotation runbook.
+- [x] `.env.example` — XAI_API_KEY + SABLE_SERVICE_TOKEN + SABLE_KOL_SERVICE_URL with hard-fail-on-missing semantics.
+- [x] **NO CI build + push** — local `docker build` on prod box, per Sieggy's call. SIDECAR.md documents the build command.
 
-### SableWeb
-- [ ] Patch `docker-compose.yml` — add `sable-kol-preflight` service block (no published ports), `depends_on: [sable-kol-preflight]` on `web`, set `SABLE_KOL_SERVICE_URL: http://sable-kol-preflight:8001` and `SABLE_SERVICE_TOKEN: ${SABLE_SERVICE_TOKEN}` on `web`.
-- [ ] Document `XAI_API_KEY` and `SABLE_SERVICE_TOKEN` env vars in `docs/DEPLOYMENT.md` (or wherever the existing env table lives).
+### SableWeb (commit `74ac672`)
+- [x] `docker-compose.yml` patched — `sable-kol-preflight` service block (no `ports:`, only compose-network), `depends_on: condition: service_healthy` on `web`, `SABLE_KOL_SERVICE_URL` + `SABLE_SERVICE_TOKEN` on `web`. xAI key only on the sidecar's env.
+- [x] `docs/DEPLOYMENT.md` updated — env table adds `SABLE_SERVICE_TOKEN` (required) + `SABLE_KOL_SERVICE_URL` (optional). New "KOL wizard sidecar" section documents the env split + build command. `.env.example` is `.gitignore`d in SableWeb (line 34: `.env*`); DEPLOYMENT.md is the source of truth.
 
 ### Tests
-- [ ] Mock xAI response, validate Pydantic parsing.
-- [ ] One real-world smoke against `@solstitch` — assert reasonable themes + comparable handles.
-- [ ] Service-token rejection test: missing/wrong header → 403.
+- [x] tests/test_grok_api.py — 16 tests: missing key, 401/403, happy path, normalization, retry-success, retry-exhausted, 429 backoff, non-JSON content, unexpected response shape, schema violation, comparable parse failures, self-reference filter, build_preflight_response signal_metadata.
+- [x] tests/test_preflight_service.py — 17 tests: token gate (parametrized over 3 endpoints × missing/wrong/unconfigured), preflight happy path with mocked Grok, xAI auth/parse failure mapping, /reuse-check splits/stale/partial-run/wrong-extract-type/empty-handles/normalization. Local `threaded_db_conn` fixture (StaticPool + check_same_thread=False) for TestClient thread-hop compatibility.
+- [x] tests/test_preflight_cli.py — 3 tests: default bundled, --enrich-only, --themes override.
+- [x] **NO live CI smoke against @solstitch** — operator-triggered via `sable-kol preflight solstitch`, NOT in CI (would bill xAI on every run).
 
-### Phase B demo
-Sidecar running alongside SableWeb in compose; SableWeb route handler reaches it via `SABLE_KOL_SERVICE_URL`; xAI key never appears in SableWeb's environment. Operator runs `sable-kol preflight @somehandle` from terminal and sees what Grok would return.
+### Phase B demo ✅
+- All Phase B tests green: 36/36 in 0.41s. Full SableKOL suite 240 passed, 4 skipped (eval), no regressions.
+- `sable-kol preflight --help` lists the new subcommand surface.
+- `docker compose config` parses cleanly with both services present, depends_on health-gating wired.
+- Could not `docker build` the image locally (daemon not running on dev laptop) — verified at deploy time on prod box per SIDECAR.md.
+
+### Phase B deploy
+
+NOT YET deployed to prod. Order: SablePlatform (Phase A migration 040) → SableKOL pull + local image build → SableWeb pull + `docker-compose up -d`. Both `XAI_API_KEY` and `SABLE_SERVICE_TOKEN` (32-byte hex from `openssl rand -hex 32`) must be in `/opt/sable/.env` BEFORE compose up.
 
 ---
 
