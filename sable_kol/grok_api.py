@@ -290,7 +290,7 @@ def enrich_handle(
     handle: str,
     *,
     client: httpx.Client | None = None,
-    timeout: float = 30.0,
+    timeout: float = 90.0,
 ) -> EnrichedHandle:
     """Live xAI lookup of a single X handle for the wizard preflight.
 
@@ -317,7 +317,7 @@ def suggest_comparable_projects(
     themes: list[str],
     *,
     client: httpx.Client | None = None,
-    timeout: float = 30.0,
+    timeout: float = 90.0,
 ) -> list[ComparableProject]:
     """Live xAI suggestion of similar-audience projects on X."""
     h = _normalize(handle)
@@ -351,8 +351,8 @@ def build_preflight_response(
     handle: str,
     *,
     client: httpx.Client | None = None,
-    enrich_timeout: float = 30.0,
-    comparable_timeout: float = 30.0,
+    enrich_timeout: float = 90.0,
+    comparable_timeout: float = 90.0,
 ) -> PreflightResponse:
     """Convenience wrapper used by the FastAPI sidecar's /preflight endpoint.
 
@@ -389,7 +389,7 @@ def build_suggest_comparable_response(
     themes: list[str],
     *,
     client: httpx.Client | None = None,
-    timeout: float = 30.0,
+    timeout: float = 90.0,
 ) -> SuggestComparableResponse:
     """Standalone wrapper for the /suggest-comparable endpoint."""
     h = _normalize(handle)

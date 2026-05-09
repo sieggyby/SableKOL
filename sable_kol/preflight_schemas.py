@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 SignalSource = Literal["grok_xai_live", "operator_manual"]
@@ -72,6 +72,10 @@ class EnrichedHandle(BaseModel):
 
     twitter_id: str | None = None
     handle: str
+    # Most string fields tolerate None — Grok occasionally emits null when the
+    # field is unknown rather than the empty string we'd ideally get. The
+    # validator coerces None → "" so downstream code (YAML write, UI render)
+    # doesn't have to special-case nullability.
     bio: str = ""
     followers: int | None = None
     verified: bool = False
@@ -87,6 +91,14 @@ class EnrichedHandle(BaseModel):
     recent_themes: list[str] = Field(default_factory=list)
     audience_archetype: str = ""
     axis_candidates: list[AxisPair] = Field(default_factory=list)
+
+    # Grok occasionally emits `null` for unknown string fields rather than the
+    # empty string we'd ideally get. Coerce on the way in so the wire format
+    # downstream (Zod, YAML write, UI) never has to special-case nullability.
+    @field_validator("bio", "audience_archetype", mode="before")
+    @classmethod
+    def _coerce_none_to_empty(cls, v):
+        return "" if v is None else v
 
 
 class PreflightRequest(BaseModel):
