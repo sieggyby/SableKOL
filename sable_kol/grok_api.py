@@ -8,7 +8,7 @@ Two public functions:
 * :func:`suggest_comparable_projects` — returns 8-10 similar-audience
   projects on X for a given handle + themes.
 
-Both use ``grok-2-latest`` via xAI's OpenAI-compatible chat completions
+Both use ``grok-4-latest`` via xAI's OpenAI-compatible chat completions
 endpoint with JSON-object response format. The model has live X search
 baked in.
 
@@ -24,7 +24,7 @@ Failure handling per plan:
 * JSON parse / Pydantic validation failure: raises :class:`GrokParseError`
   — operator falls back to manual entry in the wizard.
 
-The model name is ``grok-2-latest`` per Sieggy's call: pin to -latest, fix
+The model name is ``grok-4-latest`` per Sieggy's call: pin to -latest, fix
 breakage when it happens. If this proves unstable we pin to a date-stamped
 snapshot.
 """
@@ -54,7 +54,11 @@ logger = logging.getLogger(__name__)
 
 
 XAI_API_URL = "https://api.x.ai/v1/chat/completions"
-GROK_MODEL = "grok-2-latest"
+# 2026-05-09: bumped from grok-2-latest (deprecated/removed by xAI — returns
+# "Model not found") to grok-4-latest. Sieggy's pin policy: stay on -latest,
+# fix breakage when it happens. The chat/completions endpoint + JSON-object
+# response format still apply unchanged.
+GROK_MODEL = "grok-4-latest"
 
 FIXED_AXIS_LIBRARY = [
     "fashion",

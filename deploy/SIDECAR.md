@@ -146,7 +146,7 @@ The `web` container does not need to restart unless its compose block changed.
 | `503 service token not configured` | `SABLE_SERVICE_TOKEN` unset on sidecar | `docker-compose exec sable-kol-preflight env \| grep SABLE_SERVICE_TOKEN` |
 | `503 xAI auth failure` | `XAI_API_KEY` unset or invalid | Verify against xAI dashboard; rotate if leaked |
 | `403 invalid or missing service token` | SableWeb and sidecar have different tokens | Compare `SABLE_SERVICE_TOKEN` on both containers |
-| `502 xAI returned an unparseable response` | Grok schema drift | Check `grok-2-latest` release notes; pin to a specific snapshot if recurring |
+| `502 xAI returned an unparseable response` | Grok schema drift | Check `grok-4-latest` release notes; pin to a specific snapshot if recurring |
 | `/reuse-check` returns empty `must_fetch` | DB connection wrong or `kol_extract_runs` empty | `docker-compose exec sable-kol-preflight python -c "from sable_kol.db import open_db; \nwith open_db() as c: print(c.execute('SELECT COUNT(*) FROM kol_extract_runs').fetchone())"` |
 
 ---

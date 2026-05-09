@@ -41,7 +41,7 @@ def _fake_preflight(handle: str = "solstitch") -> PreflightResponse:
         ],
         signal_metadata=SignalMetadata(
             source="grok_xai_live",
-            model="grok-2-latest",
+            model="grok-4-latest",
             fetched_at_utc="2026-05-09T15:00:00Z",
             signal_type="interpretive",
         ),
