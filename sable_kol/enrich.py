@@ -232,7 +232,7 @@ def run_enrich(
                 "  followers_snapshot = COALESCE(:fc, followers_snapshot), "
                 "  verified = :vf, "
                 "  account_created_at = COALESCE(:ca, account_created_at), "
-                "  last_enriched_at = datetime('now'), "
+                "  last_enriched_at = CURRENT_TIMESTAMP, "
                 "  enrichment_tier = 'basic' "
                 "WHERE candidate_id = :cid",
                 {

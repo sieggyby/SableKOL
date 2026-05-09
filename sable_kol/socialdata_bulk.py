@@ -224,9 +224,11 @@ def _checkpoint_run(
 
 
 def mark_run_completed(conn: Any, run_id: str) -> None:
+    # CURRENT_TIMESTAMP is portable across SQLite + Postgres; the SQLite-only
+    # datetime('now') here errored on the live Postgres prod DB.
     conn.execute(
         "UPDATE kol_extract_runs SET cursor_completed = 1, "
-        "completed_at = datetime('now'), partial_failure_reason = NULL "
+        "completed_at = CURRENT_TIMESTAMP, partial_failure_reason = NULL "
         "WHERE run_id = :rid",
         {"rid": run_id},
     )

@@ -117,7 +117,7 @@ def run_cross_platform_import(path: str | Path) -> CrossPlatformSummary:
                 continue
             conn.execute(
                 "UPDATE kol_candidates SET platform_presence_json = :j, "
-                "  last_enriched_at = datetime('now') "
+                "  last_enriched_at = CURRENT_TIMESTAMP "
                 "WHERE candidate_id = :cid",
                 {"j": json.dumps(current), "cid": row["candidate_id"]},
             )

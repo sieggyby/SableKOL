@@ -213,7 +213,7 @@ def upsert_candidate(
             sources.append(discovery_source)
         conn.execute(
             "UPDATE kol_candidates SET "
-            "  last_seen_at = datetime('now'), "
+            "  last_seen_at = CURRENT_TIMESTAMP, "
             "  discovery_sources_json = :sources, "
             "  display_name = COALESCE(:display_name, display_name), "
             "  bio_snapshot = COALESCE(:bio, bio_snapshot), "
@@ -472,7 +472,7 @@ def upsert_external_profile(
         "SELECT 1 AS x FROM project_profiles_external WHERE handle_normalized = :h",
         {"h": h},
     ).fetchone()
-    enriched_clause = "datetime('now')" if mark_enriched_now else "NULL"
+    enriched_clause = "CURRENT_TIMESTAMP" if mark_enriched_now else "NULL"
     if existing:
         conn.execute(
             f"UPDATE project_profiles_external SET "
@@ -481,7 +481,7 @@ def upsert_external_profile(
             f"  profile_blob = COALESCE(:pb, profile_blob), "
             f"  enrichment_source = :src, "
             f"  last_enriched_at = COALESCE({enriched_clause}, last_enriched_at), "
-            f"  last_used_at = datetime('now') "
+            f"  last_used_at = CURRENT_TIMESTAMP "
             f"WHERE handle_normalized = :h",
             {
                 "tid": twitter_id,
@@ -513,7 +513,7 @@ def upsert_external_profile(
 def mark_external_profile_used(conn: Any, handle: str) -> None:
     h = normalize_handle(handle)
     conn.execute(
-        "UPDATE project_profiles_external SET last_used_at = datetime('now') "
+        "UPDATE project_profiles_external SET last_used_at = CURRENT_TIMESTAMP "
         "WHERE handle_normalized = :h",
         {"h": h},
     )
@@ -541,7 +541,7 @@ def update_conflict_state(
 ) -> None:
     conn.execute(
         "UPDATE kol_handle_resolution_conflicts SET "
-        "  resolution_state = :state, resolved_at = datetime('now'), "
+        "  resolution_state = :state, resolved_at = CURRENT_TIMESTAMP, "
         "  notes = COALESCE(:notes, notes) "
         "WHERE conflict_id = :cid",
         {"state": state, "notes": notes, "cid": conflict_id},

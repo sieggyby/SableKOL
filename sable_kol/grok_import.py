@@ -20,7 +20,7 @@ Field merge rules:
   credibility_signal   <- Grok credibility_signal if non-null
   real_name_known      <- 1 if Grok real_name_known is true, 0 if false, leave alone if null
   notes                <- Grok notes if non-null AND non-empty
-  last_enriched_at     <- datetime('now') if any field updated
+  last_enriched_at     <- CURRENT_TIMESTAMP if any field updated
   enrichment_tier      <- 'grok_basic' if any field updated
 
 After updates, kol_strength_score is recomputed for every touched candidate.
@@ -229,7 +229,7 @@ def _apply_one(conn: Any, entry: dict, summary: ImportSummary) -> bool:
     if not updates:
         # Nothing materially new. Still mark enriched so we don't re-process.
         conn.execute(
-            "UPDATE kol_candidates SET last_enriched_at = datetime('now'), "
+            "UPDATE kol_candidates SET last_enriched_at = CURRENT_TIMESTAMP, "
             "  enrichment_tier = 'grok_basic' "
             "WHERE candidate_id = :cid",
             {"cid": row["candidate_id"]},
@@ -239,7 +239,7 @@ def _apply_one(conn: Any, entry: dict, summary: ImportSummary) -> bool:
 
     # Build the UPDATE.
     set_parts = ", ".join(f"{col} = :{col}" for col in updates.keys())
-    set_parts += ", last_enriched_at = datetime('now'), enrichment_tier = 'grok_basic'"
+    set_parts += ", last_enriched_at = CURRENT_TIMESTAMP, enrichment_tier = 'grok_basic'"
     params = {**updates, "cid": row["candidate_id"]}
     conn.execute(
         f"UPDATE kol_candidates SET {set_parts} WHERE candidate_id = :cid",
