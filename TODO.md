@@ -2,7 +2,7 @@
 
 **Source of truth:** `docs/any_project_wizard_plan.md` (v3, Codex-audited round 2). Read this BEFORE doing any work. Every task below references a section.
 
-**Last updated:** 2026-05-09, post Phase C landing.
+**Last updated:** 2026-05-09, post Phase D landing — wizard complete end-to-end.
 
 **Scope:** This TODO tracks implementation of the any-project KOL wizard ONLY. It is NOT the global "what's next" tracker — for that, see `~/Projects/Sable_Slopper/TODO.md` per existing convention.
 
@@ -20,7 +20,12 @@
 - [x] **Phase C — Claim helper + worker + reuse logic** — committed 2026-05-09
    - SablePlatform — `claim_next_job` + `complete_job`/`fail_job`/`release_job`/`defer_step` in `sable_platform/db/jobs.py` (13 new tests including 50-iteration race, 1237 total pass)
    - SableKOL — `sable_kol/jobs.py` worker + `sable_kol/reuse.py` (refactor) + `sable_kol/wizard_orgs.py` org auto-create + `sable-kol jobs run` CLI subcommand + `deploy/jobs/` systemd units (18 new tests, 258 total pass)
-- [ ] Phase D — Wizard UI + status page — NEXT
+- [x] **Phase D — Wizard UI + status page** — committed 2026-05-09 (SableWeb `1fe5c09`)
+   - 5 API routes (preflight, reuse-check, create, status, retry) with allowlist + audit + Zod boundary validation
+   - 4-step wizard component (`KOLCreateWizard.tsx`) with AI-assisted chips, axis-pair picker, debounced reuse-preview, daily-quota check
+   - Status page (`KOLJobStatus.tsx`) polling every 10s, per-step retry, auto-redirect on done
+   - `WriteDriver.runMany()` for atomic org+job+steps create
+   - 21 new tests (186 total pass, was 165)
 
 ---
 
@@ -155,42 +160,55 @@ NOT YET deployed to prod. Order when deploy is greenlit (combines Phase A + B + 
 
 ---
 
-## Phase D — Wizard UI + status page (~1 day)
+## Phase D — Wizard UI + status page ✅ DONE 2026-05-09
 
 Plan section: "Wizard flow (4 steps)".
 
-### SableWeb — wizard UI
-- [ ] `/ops/kol-network/new/page.tsx` — 4-step wizard component (Identify → Tags+axes → Comparison projects → Confirm).
-- [ ] AI-assisted chips + freshness timestamps on every Grok-derived field (per AGENTS).
-- [ ] Reuse-preview live debounce (300ms) on Step 3.
-- [ ] Daily-quota check (5/day per operator) before submit.
+### SableWeb (commit `1fe5c09`)
 
-### SableWeb — API routes (every route gated + audited)
-- [ ] `POST /api/ops/kol-network/preflight/route.ts` — proxy to sidecar, allowlist gate, audit row on every hit.
-- [ ] `POST /api/ops/kol-network/preflight/reuse-check/route.ts` — proxy to sidecar `/reuse-check`.
-- [ ] `POST /api/ops/kol-network/create/route.ts` — validates, upserts org, inserts `jobs` + `job_steps` in one tx, returns `job_id`.
-- [ ] `GET /api/ops/kol-network/job/[id]/route.ts` — submitter-or-admin rule.
-- [ ] `POST /api/ops/kol-network/job/[id]/retry/route.ts` — resets failed step's status to `pending`, decrements retry count if at cap.
+**API routes — every one allowlist-gated + audited on every hit (4 outcomes: allowed/denied/quota_exceeded/auth_failed). Anonymous returns 401 + email=NULL audit row per Codex round-2 #5.**
 
-### SableWeb — status page
-- [ ] `/ops/kol-network/job/[id]/page.tsx` — polls every 10s, shows step-by-step progress from `job_steps`.
-- [ ] On `failed`: "Retry failed step" button.
-- [ ] On `done`: redirect to `/ops/kol-network/<slug>`.
+- [x] `src/app/api/ops/kol-network/preflight/route.ts` — proxy to sidecar `/preflight`, validates response with Zod (mirrors `sable_kol/preflight_schemas.py`), maps sidecar 503/502 through.
+- [x] `src/app/api/ops/kol-network/preflight/reuse-check/route.ts` — proxy to sidecar `/reuse-check`, debounced 300ms by the wizard UI.
+- [x] `src/app/api/ops/kol-network/create/route.ts` — daily-quota gate (5/operator/day, counted from `kol_create_audit` outcome='allowed' rows in the last 24h), atomic create via new `WriteDriver.runMany()` (orgs upsert with status='inactive' + config_json prospect block + jobs row + 7 job_steps rows in a single tx).
+- [x] `src/app/api/ops/kol-network/job/[id]/route.ts` — GET, submitter-or-admin rule (`session.role === 'admin'` OR `session.email === job.config.submitted_by_email`).
+- [x] `src/app/api/ops/kol-network/job/[id]/retry/route.ts` — POST, same auth rule, resets failed step to `pending` + retries=0, flips job back to `pending` so worker re-claims.
 
-### Tests (per plan "Required tests" list)
-- [ ] **SableWeb auth** at `tests/api-kol-network-auth.test.ts`:
-   - Non-allowlisted email gets 403 on every route
-   - Submitter-or-admin rule for status/retry
-   - Audit row inserted on every hit (allowed AND denied)
-   - Anonymous (no session) → 401, audit row with `email IS NULL`
-- [ ] **End-to-end visibility** at `tests/integration-kol-wizard.test.ts`:
-   - Mock sidecar, submit wizard, assert `jobs` row created
-   - Mock worker output (write YAML + network JSON to expected paths)
-   - Assert `discoveredClientIds()` returns the new slug
-   - Assert `/ops/kol-network/<slug>` renders with non-empty data
+**Wizard UI**
+- [x] `src/components/ops/KOLCreateWizard.tsx` — 4-step client component:
+   - Step 1 Identify: handle input + auto-derived slug + display_name (operator can override)
+   - Step 2 Tags+Axes: editable theme chips, axis-pair picker (Grok candidates + manual fixed-library fallback), mode picker (stealth/public)
+   - Step 3 Comparison projects: Grok suggestions with checkboxes + custom-handle add + live debounced reuse-preview ("Reusing N/M cohorts (180-day freshness), fetching K new ones, est ~$X")
+   - Step 4 Confirm: review pane + cost ceiling + ETA, redirects to status page on submit
+- [x] AI-assisted chips + freshness timestamps on every Grok-derived field per AGENTS signal taxonomy.
+- [x] `src/app/ops/kol-network/new/page.tsx` — replaced Phase A 403 stub with the wizard mount (server-component still does `getSession()` + `canCreateKolProject` re-check before mounting).
+
+**Status page**
+- [x] `src/components/ops/KOLJobStatus.tsx` — polls every 10s, step-by-step status dots, per-step Retry button on failed steps, auto-redirect to `/ops/kol-network/<slug>` on done.
+- [x] `src/app/ops/kol-network/job/[id]/page.tsx` — server-component gate + mounts the status component.
+
+**Lib**
+- [x] `src/lib/kol-create-audit.ts` — `recordAudit()` writes `kol_create_audit` rows via `getWriteDriver()`. `extractAuditIp()` prefers `x-real-ip` over `x-forwarded-for` (rightmost-only).
+- [x] `src/lib/kol-create-gate.ts` — `withWizardGate()` is the shared 401/403/audit flow used by every route. `fetchSidecar()` reads `SABLE_KOL_SERVICE_URL` + `SABLE_SERVICE_TOKEN` from env so neither reaches the browser bundle.
+- [x] `src/lib/kol-create-job.ts` — `buildStepNames()`, `createWizardJob()` (atomic via `runMany`), `checkDailyQuota()`, `getWizardJob()`, `getWizardSteps()`, `retryStep()`.
+- [x] `src/lib/kol-create-schemas.ts` — Zod schemas matching `sable_kol/preflight_schemas.py` field-for-field.
+- [x] `src/lib/db-write.ts` — added `WriteDriver.runMany()` for atomic multi-statement writes (Postgres: single client + BEGIN/COMMIT/ROLLBACK; SQLite: `db.transaction(fn)`).
+
+### Tests
+- [x] `tests/api-kol-network-auth.test.ts` — 20 tests covering anonymous→401+auth_failed, non-allowlisted→403+denied, allowed→200+allowed, quota→429+quota_exceeded, sidecar schema drift→502, submitter-or-admin (admin override + non-admin operator who isn't the submitter→403), invalid body→400, step-not-failed→409, atomic 9-statement create.
+- [x] `tests/integration-kol-wizard.test.ts` — 1 end-to-end test: preflight → create (asserts atomic 9-statement runMany with correct config_json shape including `submitted_by_email`) → simulated worker writes YAML → `discoveredClientIds()` includes the new slug.
+
+Full vitest: 186 passed, 21 new (was 165). Type-check + lint clean.
 
 ### Phase D demo
-End-to-end. Operator logs in, clicks "+ New project", types a handle, walks the wizard, watches status page, lands on the new project's network page when the worker finishes.
+End-to-end. Operator logs in (allowlisted email), clicks "+ New project", types a handle, the wizard pre-fills via Grok, operator picks axes + cohorts, submits. Status page renders, polls. Worker (running on systemd timer) claims and walks the steps. On `done`, browser auto-redirects to the new project's network page (`/ops/kol-network/<slug>`).
+
+### Phase D deploy
+
+Combined with Phase A+B+C — see "Phase C deploy" above for the full rollout order. Phase D-specific reminders:
+- SableWeb compose patch already includes the sidecar service (Phase B `74ac672`); after Phase D pull, just `docker-compose up -d` to pick up the new wizard pages + API routes.
+- `SABLE_SERVICE_TOKEN` must be in `/opt/sable/.env` BEFORE compose up so the sidecar accepts the proxy's `X-Sable-Service-Token` header.
+- Daily-quota counter resets naturally on a 24h sliding window — no cron needed.
 
 ---
 
