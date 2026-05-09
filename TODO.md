@@ -127,7 +127,7 @@ Plan section: "Worker model" + "Reuse detection".
    - Honors `next_retry_at` (skip steps where `next_retry_at > now`)
    - Step machine per plan: `enrich`, `suggest_comparable`, `reuse_check`, `survey_cohort_<handle>` × N, `write_yaml`, `regenerate`
 - [ ] Add `sable-kol jobs run` CLI subcommand (single-tick mode, called by systemd timer).
-- [ ] Implement `cohorts_to_fetch(db, comparison_handles, freshness_days=180)` — dual-driver, `IN (...)` + ISO-string comparison.
+- [ ] **Refactor `cohorts_to_fetch` out of `sable_kol/preflight_service.py`** (Phase B shipped it inside the FastAPI module). Move to `sable_kol/db.py` or a new `sable_kol/reuse.py`, import it from BOTH the sidecar AND the worker. Existing impl is dual-driver (`?` positional + ISO-8601 comparison) and tested via `tests/test_preflight_service.py::test_reuse_check_*` — those tests should keep passing post-refactor.
 - [ ] Implement org auto-create helper:
    - Upsert `orgs(org_id, display_name, twitter_handle, status='inactive', config_json={"org_type":"prospect", "created_via":"kol_wizard", "wizard_job_id":<uuid>})`
    - DO NOT use `org_type` or `is_active` columns (they don't exist on `orgs`)
