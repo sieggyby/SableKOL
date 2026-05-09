@@ -129,6 +129,8 @@ CELEBRITY_DENYLIST = {
     "punk6529",     # arguable — anon thought leader; kept here, override via PERSON_ALLOWLIST if not desired
     # Mainstream celebrities outside crypto-native space
     "parishilton", "diplo", "kevinrose", "garyvee",
+    # Investigative journalist; not a crypto-fit voice
+    "_whitneywebb",
     # Trader / news aggregator accounts that broadcast-only
     "zachboychuk", "raynft_", "styler_walker",
 }
