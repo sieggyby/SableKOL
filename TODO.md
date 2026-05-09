@@ -2,60 +2,65 @@
 
 **Source of truth:** `docs/any_project_wizard_plan.md` (v3, Codex-audited round 2). Read this BEFORE doing any work. Every task below references a section.
 
-**Last updated:** 2026-05-08, Sieggy + Claude session signing off pre-implementation.
+**Last updated:** 2026-05-09, post Phase A landing.
 
 **Scope:** This TODO tracks implementation of the any-project KOL wizard ONLY. It is NOT the global "what's next" tracker — for that, see `~/Projects/Sable_Slopper/TODO.md` per existing convention.
 
 ---
 
-## Pre-flight: pending state from prior session
+## Status
 
-Before opening the plan, settle these so a fresh Claude isn't blindsided:
-
-- [ ] **Whitney Webb fix** — `sable_kol/filters.py` has `_whitneywebb` added to `CELEBRITY_DENYLIST` locally, NOT committed, NOT deployed. Decide: commit + deploy now, or batch with Phase A foundation work. (See "Whitney Webb fix" section in the plan.)
-- [ ] **`deploy/migrate_kol_to_pg.py`** — uncommitted. Was used once 2026-05-07 to seed prod Postgres from the operator's local SQLite. Do NOT re-run unless prod KOL tables need re-seeding. Commit as historical artifact.
-- [ ] **SableWeb `src/components/ops/KOLNetwork.tsx`** — zoom + axis-chrome changes are DEPLOYED to prod (via rsync 2026-05-07) but uncommitted in the local SableWeb repo. Other unrelated SableWeb changes are also uncommitted; don't sweep them in unless intentional.
-- [ ] **`docs/any_project_wizard_plan.md`** itself is uncommitted in SableKOL. Commit as the canonical plan reference before starting work.
+- [x] **Pre-flight** — committed 2026-05-08 (`73b69e6`, `6ae2992`)
+- [x] **Phase A — Foundation** — committed 2026-05-08, Sieggy review pending before Phase B
+   - SablePlatform `b0a08b5` — migration 040 (1224 tests pass)
+   - SableWeb `2322322` — allowlist + edge gate + button stub (165 tests pass)
+- [ ] **Phase B — Grok sidecar + preflight CLI** — NEXT
+- [ ] Phase C — Claim helper + worker + reuse logic
+- [ ] Phase D — Wizard UI + status page
 
 ---
 
-## Phase A — Foundation (~1.25 days)
+## Pre-flight: pending state from prior session ✅ DONE
+
+- [x] **Whitney Webb fix** — `sable_kol/filters.py` `_whitneywebb` denylist, committed `6ae2992`. Not yet deployed to prod (will ride next SableKOL sync to box).
+- [x] **`deploy/migrate_kol_to_pg.py`** — committed as historical artifact (`73b69e6`). Do NOT re-run unless prod KOL tables need re-seeding.
+- [ ] **SableWeb `src/components/ops/KOLNetwork.tsx`** — STILL uncommitted locally (zoom + axis-chrome already deployed via rsync 2026-05-07). Plus other unrelated changes in `src/app/api/intake`, `src/app/intake`, `src/app/proof/multisynq*`, `src/app/synq`, deleted `src/app/synq2`, `src/lib/db.ts`, `src/lib/db-write.ts`, `tests/api-intake.test.ts`. Phase A intentionally did NOT sweep these in.
+- [x] **`docs/any_project_wizard_plan.md`** + `TODO.md` — committed (`73b69e6`).
+
+---
+
+## Phase A — Foundation ✅ DONE 2026-05-08
 
 Plan section: "Phase A — Foundation".
 
-### SableWeb
-- [ ] Create `src/lib/kol-create-allowlist.ts` (edge-safe, pure data). 4 emails: `george@arkn.io`, `ben@arkn.io`, `arfcahit1910@gmail.com`, `siegby@gmail.com`. Lowercase-normalized check.
-- [ ] `src/lib/allowlist.ts` re-exports `canCreateKolProject` for non-edge consumers.
-- [ ] `src/middleware.ts` gates `/ops/kol-network/new` — redirect to `/ops` if `!canCreateKolProject(session.email)`.
-- [ ] `/ops/kol-network/page.tsx` renders the "+ New project" button conditionally.
-- [ ] `/ops/kol-network/new/page.tsx` stub — re-checks via `getSession()`, returns 403 if false. Wizard UI lands in Phase D.
+### SableWeb (commit `2322322`)
+- [x] `src/lib/kol-create-allowlist.ts` (edge-safe, pure data, 4 emails, lowercase-normalized check)
+- [x] `src/lib/allowlist.ts` re-exports `canCreateKolProject` + `KOL_CREATE_EMAILS`
+- [x] `src/middleware.ts` gates `/ops/kol-network/new` — decodes JWT inline, redirects to `/ops` if not allowlisted
+- [x] `/ops/kol-network/page.tsx` renders "+ New project" button conditionally (empty-state path)
+- [x] `/ops/kol-network/[clientId]/page.tsx` renders the same button in the header (the redirect-target path operators actually see)
+- [x] `/ops/kol-network/new/page.tsx` stub — `getSession()` re-check + 403 stub for non-allowlisted; placeholder for allowlisted until Phase D
+- [x] `tests/kol-create-allowlist.test.ts` — 6 tests (allowed, case-insensitive, broader-ops denied, null/empty)
 
-### SablePlatform — Migration 040 (full AGENTS-compliant spec)
-Plan section: "Migration 040 — full SablePlatform AGENTS-compliant spec".
-
-- [ ] Write `sable_platform/db/migrations/040_kol_wizard_infra.sql`:
-   - `CREATE TABLE kol_create_audit` with `email TEXT NULL`
-   - `ALTER TABLE jobs ADD COLUMN worker_id TEXT`
-   - `ALTER TABLE job_steps ADD COLUMN next_retry_at TEXT`
-   - 4 indexes (audit email, audit at, audit outcome, jobs worker, job_steps next_retry)
-   - `UPDATE schema_version SET version = 40 WHERE version < 40`
-- [ ] Add `("040_kol_wizard_infra.sql", 40)` to `_MIGRATIONS` in `sable_platform/db/connection.py`.
-- [ ] Add `kol_create_audit` table + new columns to `sable_platform/db/schema.py`.
-- [ ] Write Alembic revision at `sable_platform/alembic/versions/<hash>_kol_wizard_infra.py`. `upgrade()` AND `downgrade()` both required.
-- [ ] Write `tests/db/test_migration_040.py`:
-   - SQLite + Postgres parity (run all migrations, inspect schema)
-   - Assert `kol_create_audit.email` is nullable on BOTH drivers
-   - Assert `jobs.worker_id` and `job_steps.next_retry_at` are nullable on BOTH drivers
-- [ ] Write `tests/db/test_kol_create_audit.py` insert-fixture tests:
-   - `email IS NULL` accepted for `outcome='auth_failed'`
-   - FK to `jobs(job_id)` enforced when `job_id` is set
-   - All 4 outcome values (`allowed`/`denied`/`quota_exceeded`/`auth_failed`) succeed
+### SablePlatform — Migration 040 (commit `b0a08b5`)
+- [x] `sable_platform/db/migrations/040_kol_wizard_infra.sql` — `kol_create_audit` (email NULLABLE) + `jobs.worker_id` + `job_steps.next_retry_at` + 5 indexes. **Lesson re-encountered:** runner splits on raw `;` and `;` inside `--` comments creates phantom statements; rewrote comments to use `--` separators. Do NOT add explicit `BEGIN;`/`COMMIT;` (runner already wraps in `with conn:`).
+- [x] `_MIGRATIONS` registered in `sable_platform/db/connection.py`
+- [x] `sable_platform/db/schema.py` — `kol_create_audit` table + new columns + 5 indexes
+- [x] Alembic revision `d8e0f1a2b040_kol_wizard_infra.py` — upgrade + downgrade
+- [x] `migrate_pg.py` — `kol_create_audit` registered in `TABLE_LOAD_ORDER` + `SEQUENCE_TABLES`
+- [x] `tests/db/test_migration_040.py` — SQLite parity + SA parity + Postgres path skipped without `SABLE_TEST_POSTGRES_URL`. Asserts nullable email + nullable worker_id + nullable next_retry_at.
+- [x] `tests/db/test_kol_create_audit.py` — all 4 outcomes, NULL email accepted for `auth_failed`, FK enforced when set, NULL job_id accepted
 
 ### SableKOL
-- [ ] Whitney Webb fix in `sable_kol/filters.py` already staged — confirm + commit.
+- [x] Whitney Webb fix committed (`6ae2992`)
 
-### Phase A demo
-Button visible to 4 ops, click → 403 stub. Migration applied + tested both drivers; nullable columns assertable.
+### Phase A demo ✅
+- Fresh-DB init verified: `sable-platform init` → `schema_version=40`, all three additions present.
+- Button + 403 stub gate logic test-covered. Manual UI positive-path verification still requires `AUTH_ENABLED=true` + signing in as one of the 4 emails (dev session bypass returns `ops@sable.xyz` which is NOT on the wizard allowlist — correct negative-case behavior).
+
+### Phase A deploy
+
+NOT YET deployed to prod. Three repos to roll forward in order: SablePlatform → SableKOL → SableWeb. Each is a separate `git pull` + restart cycle on the relevant service. SablePlatform needs `alembic upgrade head` against the live Postgres DB before SableKOL or SableWeb pull.
 
 ---
 
