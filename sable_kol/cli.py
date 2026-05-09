@@ -579,6 +579,66 @@ def follow_graph_analyze(
 
 
 # ---------------------------------------------------------------------------
+# Wizard preflight (Phase B — any-project KOL wizard)
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="preflight")
+@click.argument("handle")
+@click.option(
+    "--enrich-only",
+    is_flag=True,
+    help="Skip the comparable-projects xAI call. Cheaper and faster, but the "
+         "operator only sees Step 1+2 pre-fill data, not Step 3 suggestions.",
+)
+@click.option(
+    "--themes",
+    default=None,
+    help="Override the themes used for suggest_comparable_projects "
+         "(comma-separated). Default: themes derived from enrich_handle.",
+)
+def preflight_cmd(
+    handle: str,
+    enrich_only: bool,
+    themes: str | None,
+) -> None:
+    """Print what the any-project wizard would pre-fill for HANDLE.
+
+    Calls xAI Grok directly — requires XAI_API_KEY in env. No DB writes, no
+    sidecar service required. Prints a pretty-JSON dump of the same response
+    the wizard's /preflight route would receive.
+    """
+    import json as _json
+
+    from sable_kol.grok_api import (
+        build_preflight_response,
+        enrich_handle,
+        suggest_comparable_projects,
+    )
+
+    if enrich_only:
+        enriched = enrich_handle(handle)
+        click.echo(_json.dumps(enriched.model_dump(), indent=2))
+        return
+
+    if themes is not None:
+        # Operator-overridden themes path: split, call enrich + suggest separately.
+        theme_list = [t.strip() for t in themes.split(",") if t.strip()]
+        enriched = enrich_handle(handle)
+        comparables = suggest_comparable_projects(handle, theme_list)
+        payload = {
+            **enriched.model_dump(),
+            "comparable_projects": [c.model_dump() for c in comparables],
+            "themes_override": theme_list,
+        }
+        click.echo(_json.dumps(payload, indent=2))
+        return
+
+    response = build_preflight_response(handle)
+    click.echo(_json.dumps(response.model_dump(), indent=2))
+
+
+# ---------------------------------------------------------------------------
 # Outreach plan
 # ---------------------------------------------------------------------------
 

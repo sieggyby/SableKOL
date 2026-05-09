@@ -1,0 +1,54 @@
+## SableKOL preflight sidecar — FastAPI service exposed to SableWeb only.
+##
+## Build context: the *parent* of SableKOL (so SablePlatform is available
+## at ./SablePlatform). Run from that parent dir:
+##
+##     docker build \
+##         -f SableKOL/Dockerfile.preflight \
+##         -t sable-kol-preflight:latest \
+##         .
+##
+## See SableKOL/deploy/SIDECAR.md for the full deploy + smoke-test runbook.
+##
+## Runtime env (set by SableWeb's docker-compose.yml):
+##   XAI_API_KEY            (required) xAI Grok API key
+##   SABLE_SERVICE_TOKEN    (required) shared secret with SableWeb
+##   SABLE_DATABASE_URL     (required) Postgres URL for kol_extract_runs reads
+##
+## The container exposes 8001 inside the compose network only — no `ports:`
+## block in compose. xAI key never appears in SableWeb's environment.
+
+FROM python:3.12-slim AS base
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
+
+WORKDIR /app
+
+## Install SablePlatform first (it's a hard dep of sable-kol). Editable
+## install so the path stays predictable; we don't need to rebuild SP wheels
+## every time we bump SableKOL.
+COPY SablePlatform /opt/sable-platform
+RUN pip install --no-cache-dir -e /opt/sable-platform
+
+## Then install sable-kol with the [service] extra (FastAPI + uvicorn).
+COPY SableKOL /opt/sable-kol
+RUN pip install --no-cache-dir /opt/sable-kol[service]
+
+## Bind to 0.0.0.0 inside the container — compose network reachability only.
+EXPOSE 8001
+
+## Healthcheck hits /healthz which is token-free; compose can use it directly.
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 --start-period=10s \
+    CMD python -c "import urllib.request, sys; \
+        sys.exit(0 if urllib.request.urlopen('http://localhost:8001/healthz', timeout=3).status == 200 else 1)"
+
+## --workers 1: this service is single-tenant (one SableWeb instance, low
+## concurrency). uvloop + httptools come in via uvicorn[standard].
+CMD ["uvicorn", "sable_kol.preflight_service:app", \
+     "--host", "0.0.0.0", \
+     "--port", "8001", \
+     "--workers", "1", \
+     "--no-access-log"]

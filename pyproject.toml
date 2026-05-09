@@ -31,6 +31,15 @@ paid-enrich = [
     "sable",
 ]
 
+# Required for the preflight FastAPI sidecar (sable_kol.preflight_service).
+# The sidecar's Dockerfile installs sable-kol[service]; the CLI install does
+# NOT pull these in by default (they're a multi-MB dep set the CLI doesn't
+# need). Tests using TestClient pytest.importorskip this extra.
+service = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+]
+
 [project.scripts]
 sable-kol = "sable_kol.cli:cli"
 
