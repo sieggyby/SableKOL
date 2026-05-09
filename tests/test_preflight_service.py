@@ -264,7 +264,7 @@ def test_reuse_check_splits_correctly(app_client, threaded_db_conn, monkeypatch)
     body = r.json()
     assert body["already_have"] == ["solstitch"]
     assert sorted(body["must_fetch"]) == ["metafactory", "rtfkt"]
-    assert body["estimated_cost_usd"] == round(2 * 4.50, 2)
+    assert body["estimated_cost_usd"] == round(2 * 1.00, 2)
     assert body["freshness_days"] == 180
 
 

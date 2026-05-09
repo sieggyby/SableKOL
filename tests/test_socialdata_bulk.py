@@ -270,8 +270,8 @@ def test_pull_followers_paginates_to_completion(db_conn):
     assert final.cursor_completed == 1
     assert final.pages_fetched == 3
     assert final.rows_inserted == 4
-    # 3 pages × $0.002.
-    assert abs(final.cost_usd_logged - 0.006) < 1e-9
+    # 4 results total (2 + 1 + 1) × $0.0002 per result.
+    assert abs(final.cost_usd_logged - 0.0008) < 1e-9
     # First call had no cursor; subsequent had the prior next_cursor.
     assert "cursor" not in seen_params[0]
     assert seen_params[1]["cursor"] == "cursor_2"

@@ -30,9 +30,13 @@ Run-record contract:
   same target+extract_type and a fresh ``run_id`` (or pass ``resume_run_id``
   to continue an existing run from its ``last_cursor``).
 
-Cost logging: **one ``cost_events`` row per page** at ``$0.002`` (estimated
-internal rate; see SolStitch plan cost-estimate caveat). Slopper's
-``socialdata_get`` does NOT log cost — that is SableKOL's responsibility.
+Cost logging: **one ``cost_events`` row per page**, with cost computed as
+``max(len(response.users), 1) * COST_USD_PER_RESULT`` per page. SocialData's
+documented price for ``/twitter/followers/list`` and ``/twitter/friends/list``
+is **$0.0002 per follower / followed user returned** (per-result, not per-call
+or per-page). Empty pages still cost the per-request floor of $0.0002.
+Slopper's ``socialdata_get`` does NOT log cost — that is SableKOL's
+responsibility.
 """
 from __future__ import annotations
 
@@ -50,10 +54,25 @@ from sable_kol import cost as cost_mod
 
 PROVIDER_SOCIALDATA = "socialdata"
 
-# Per-page result count is NOT documented by SocialData; treat $0.002 as one
-# call regardless of returned-row count. Phase 0.5 of the SolStitch plan
-# calibrates the empirically observed page size.
-COST_USD_PER_PAGE = 0.002
+# SocialData docs explicitly say:
+#   /twitter/followers/list     $0.0002 per follower returned
+#   /twitter/friends/list       $0.0002 per followed user returned
+#   /twitter/user/<handle>      $0.0002 per request (flat)
+# Empty pages still cost the per-request floor of $0.0002 (SocialData's "fair
+# use" provision charges $0.0002 per request beyond the first 3/min even
+# when zero results return).
+#
+# Earlier code logged a flat $0.002 per page regardless of result count,
+# which under-recorded actual spend by ~3-5x (a typical 30-50-result page
+# costs $0.006-$0.010). See ``feedback_cost_estimate_framing`` memory for
+# the original undercount discovery.
+COST_USD_PER_RESULT = 0.0002
+COST_USD_PER_PROFILE_FETCH = 0.0002
+
+# Deprecated — kept as a shim for any old caller still importing this name.
+# New code uses COST_USD_PER_RESULT * len(page.users) for paginated extracts
+# and COST_USD_PER_PROFILE_FETCH for /twitter/user/<handle>.
+COST_USD_PER_PAGE = COST_USD_PER_RESULT
 
 # Cost call_types written to ``cost_events`` (CALL_TYPE_PREFIX adds "sablekol.").
 CALL_TYPE_FOLLOWERS = "socialdata_followers_page"
@@ -327,7 +346,7 @@ def resolve_user_id(
                 conn,
                 org_id=None,
                 call_type=CALL_TYPE_PROFILE_RESOLVE,
-                cost_usd=COST_USD_PER_PAGE,
+                cost_usd=COST_USD_PER_PROFILE_FETCH,
                 call_status="error",
             )
         raise
@@ -337,7 +356,7 @@ def resolve_user_id(
             conn,
             org_id=None,
             call_type=CALL_TYPE_PROFILE_RESOLVE,
-            cost_usd=COST_USD_PER_PAGE,
+            cost_usd=COST_USD_PER_PROFILE_FETCH,
         )
 
     if not isinstance(data, dict):
@@ -454,6 +473,9 @@ def _paginate(
             pages_done += 1
 
             users = data.get("users") or []
+            # SocialData charges per result returned (BEFORE our QC/floor
+            # filter), with a per-request floor of $0.0002 even on empty pages.
+            page_cost = max(len(users), 1) * COST_USD_PER_RESULT
             kept: list[dict] = []
             for u in users:
                 if not qc_profile(u):
@@ -473,13 +495,13 @@ def _paginate(
                 last_cursor=next_cursor,
                 pages_delta=1,
                 rows_delta=len(kept),
-                cost_delta=COST_USD_PER_PAGE,
+                cost_delta=page_cost,
             )
             cost_mod.record(
                 conn,
                 org_id=None,
                 call_type=cost_call_type,
-                cost_usd=COST_USD_PER_PAGE,
+                cost_usd=page_cost,
             )
 
             for u in kept:

@@ -25,12 +25,19 @@ from typing import Any
 from sable_kol.db import normalize_handle
 
 
-# Conservative per-cohort SocialData estimate. Empirically the SolStitch
-# follower extracts at $0.002/page understated by ~3x (see memory file
-# ``feedback_cost_estimate_framing.md``). $4.50/cohort is the rounded
-# 3x-multiplied estimate; this is the wizard's pre-submit projection only.
-# The actual spend is logged via ``cost_events`` per the worker.
-COST_USD_PER_COHORT_FETCH = 4.50
+# Wizard pre-submit projection of "what does fetching one new cohort cost?"
+# SocialData charges $0.0002 per follower returned, so a cohort with N
+# followers costs ~$0.0002 × N. We don't know follower counts at preview
+# time, so we use a $1.00/cohort default that assumes ~5K followers (typical
+# mid-size KOL). The hard cap on the wizard job is $50 total, so a wildly
+# under-projected cohort would still get caught by the per-job ceiling.
+#
+# Earlier code used $4.50/cohort, which was the original $1.50 (a different
+# under-estimate) × 3 to compensate for the per-page $0.002 logging bug
+# fixed in 2026-05-09. With per-result accounting now correct, the rationale
+# for the 3x multiplier no longer applies and the projection drops to
+# $1.00/cohort. See ``feedback_cost_estimate_framing`` memory for history.
+COST_USD_PER_COHORT_FETCH = 1.00
 
 
 def cohorts_to_fetch(

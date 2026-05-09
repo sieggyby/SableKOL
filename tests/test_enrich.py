@@ -170,7 +170,7 @@ def test_enrich_writes_followers_and_strength(db_conn, monkeypatch):
     s = enrich_mod.run_enrich(socialdata_fetcher=fetcher)
     assert s.enriched == 1
     assert s.errors == 0
-    assert s.cost_usd == pytest.approx(0.002)
+    assert s.cost_usd == pytest.approx(0.0002)
     assert s.rescored == 1
 
     row = db_conn.execute(

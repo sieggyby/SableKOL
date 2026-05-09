@@ -477,8 +477,8 @@ class TestReuseModuleExports:
             estimate_fetch_cost_usd,
         )
         assert callable(cohorts_to_fetch)
-        assert COST_USD_PER_COHORT_FETCH == 4.50
-        assert estimate_fetch_cost_usd(["a", "b", "c"]) == 13.50
+        assert COST_USD_PER_COHORT_FETCH == 1.00
+        assert estimate_fetch_cost_usd(["a", "b", "c"]) == 3.00
 
     def test_preflight_service_uses_shared_module(self):
         """Sanity check: preflight_service exports cohorts_to_fetch through

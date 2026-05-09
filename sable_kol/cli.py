@@ -194,7 +194,7 @@ def bank_resolve(conflict_id: int, action: str) -> None:
 @click.option(
     "--paid-enrich",
     is_flag=True,
-    help="Path (ii) only — opt in to one cached SocialData profile call (~$0.002, TTL 7d).",
+    help="Path (ii) only — opt in to one cached SocialData profile call (~$0.0002, TTL 7d).",
 )
 @click.option(
     "--refresh-paid",

@@ -216,7 +216,7 @@ def build_external_profile(
                 conn,
                 org_id=None,
                 call_type="socialdata_user_profile",
-                cost_usd=0.002,
+                cost_usd=0.0002,
                 call_status="error",
             )
             raise
@@ -247,7 +247,7 @@ def build_external_profile(
             conn,
             org_id=None,
             call_type="socialdata_user_profile",
-            cost_usd=0.002,
+            cost_usd=0.0002,
         )
         cached = get_external_profile(conn, h)
         source = "external_paid_basic"

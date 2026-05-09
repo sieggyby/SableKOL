@@ -11,7 +11,7 @@ Two modes:
   ``GET /twitter/user/{handle}`` once. Writes back: ``twitter_id``, an
   upgraded ``bio_snapshot``, ``followers_snapshot``, ``verified``,
   ``account_created_at``. Then recomputes ``kol_strength_score``. Cost ≈
-  ``$0.002 × candidates``. TTL is governed by ``last_enriched_at`` (7 days,
+  ``$0.0002 × candidates``. TTL is governed by ``last_enriched_at`` (7 days,
   matching ``project_profiles_external``); ``--refresh`` ignores TTL.
 
 The enrichment fetcher is injectable for tests (same pattern as
@@ -261,10 +261,10 @@ def run_enrich(
                 conn,
                 org_id=None,
                 call_type="socialdata_user_profile",
-                cost_usd=0.002,
+                cost_usd=0.0002,
             )
             summary.enriched += 1
-            summary.cost_usd += 0.002
+            summary.cost_usd += 0.0002
             summary.rescored += 1
 
     return summary

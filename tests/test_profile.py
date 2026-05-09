@@ -166,7 +166,7 @@ def test_external_profile_paid_enrich_calls_socialdata(db_conn):
     ).fetchone()
     assert ev is not None
     assert ev["call_status"] == "success"
-    assert abs(ev["cost_usd"] - 0.002) < 1e-9
+    assert abs(ev["cost_usd"] - 0.0002) < 1e-9
     # voice_blob now contains the bio.
     assert p.voice_blob is not None
     assert "yield aggregator" in p.voice_blob
