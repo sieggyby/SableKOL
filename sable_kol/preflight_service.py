@@ -23,13 +23,11 @@ from __future__ import annotations
 import logging
 import os
 import secrets
-from datetime import datetime, timedelta, timezone
-from typing import Annotated, Any
+from typing import Annotated
 
 from fastapi import FastAPI, Header, HTTPException, status
 from fastapi.responses import JSONResponse
 
-from sable_kol.db import normalize_handle
 from sable_kol.grok_api import (
     GrokAPIError,
     GrokAuthError,
@@ -45,17 +43,10 @@ from sable_kol.preflight_schemas import (
     SuggestComparableRequest,
     SuggestComparableResponse,
 )
+from sable_kol.reuse import cohorts_to_fetch, estimate_fetch_cost_usd
 
 
 logger = logging.getLogger(__name__)
-
-
-# Conservative per-cohort SocialData estimate. Empirically the SolStitch
-# follower extracts at $0.002/page understated by ~3x (see memory file
-# ``feedback_cost_estimate_framing.md``). $4.50/cohort is the rounded
-# 3x-multiplied estimate; this is the wizard's pre-submit projection only.
-# The actual spend is logged via ``cost_events`` per the worker.
-COST_USD_PER_COHORT_FETCH = 4.50
 
 
 app = FastAPI(
@@ -167,44 +158,9 @@ def suggest_comparable(
 
 
 # ---------------------------------------------------------------------------
-# /reuse-check
+# /reuse-check (cohorts_to_fetch + estimate_fetch_cost_usd live in sable_kol.reuse
+# so the worker can import them without dragging in FastAPI)
 # ---------------------------------------------------------------------------
-
-
-def cohorts_to_fetch(
-    db: Any,
-    comparison_handles: list[str],
-    freshness_days: int = 180,
-) -> tuple[list[str], list[str]]:
-    """Split a candidate cohort list into (already_have, must_fetch).
-
-    Dual-driver: uses ``?`` positional placeholders + ISO-8601 string
-    comparison so the same query runs on SQLite (dev / tests) and Postgres
-    (prod). CompatConnection translates ``?`` positional to SQLAlchemy
-    named params for Postgres.
-
-    A cohort is considered already-fetched when ``kol_extract_runs`` has at
-    least one row for the normalized handle with ``extract_type='followers'``,
-    ``cursor_completed=1``, and ``completed_at`` newer than the cutoff.
-    """
-    norm = [normalize_handle(h) for h in comparison_handles]
-    if not norm:
-        return [], []
-    cutoff = (datetime.now(timezone.utc) - timedelta(days=freshness_days)).isoformat()
-    placeholders = ",".join("?" * len(norm))
-    sql = f"""
-        SELECT DISTINCT target_handle_normalized
-        FROM kol_extract_runs
-        WHERE target_handle_normalized IN ({placeholders})
-          AND extract_type = 'followers'
-          AND cursor_completed = 1
-          AND completed_at > ?
-    """
-    rows = db.execute(sql, (*norm, cutoff)).fetchall()
-    already_have_set = {r[0] for r in rows}
-    already_have = [h for h in norm if h in already_have_set]
-    must_fetch = [h for h in norm if h not in already_have_set]
-    return already_have, must_fetch
 
 
 @app.post("/reuse-check", response_model=ReuseCheckResponse)
@@ -222,7 +178,7 @@ def reuse_check(
     return ReuseCheckResponse(
         already_have=already_have,
         must_fetch=must_fetch,
-        estimated_cost_usd=round(len(must_fetch) * COST_USD_PER_COHORT_FETCH, 2),
+        estimated_cost_usd=estimate_fetch_cost_usd(must_fetch),
         freshness_days=body.freshness_days,
     )
 

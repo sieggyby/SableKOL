@@ -776,5 +776,63 @@ def regenerate_cmd(
             raise click.exceptions.Exit(1)
 
 
+# ---------------------------------------------------------------------------
+# Worker — any-project KOL wizard job runner (Phase C)
+# ---------------------------------------------------------------------------
+
+
+@cli.group(name="jobs")
+def jobs_grp() -> None:
+    """Run the KOL-wizard job worker (driven by systemd timer in prod)."""
+
+
+@jobs_grp.command(name="run")
+@click.option(
+    "--job-type",
+    default="kol_create",
+    show_default=True,
+    help="job_type filter passed to claim_next_job. Default 'kol_create' is "
+         "the wizard's job type; pass another value to run a different worker.",
+)
+@click.option(
+    "--max-jobs",
+    type=int,
+    default=1,
+    show_default=True,
+    help="Max jobs claimed per invocation. systemd timer fires every 60s "
+         "with --max-jobs 1 (sequential — SocialData rate limits make "
+         "parallelism counterproductive).",
+)
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Print one JSON line per tick (for systemd journal scrapes).",
+)
+def jobs_run(job_type: str, max_jobs: int, as_json: bool) -> None:
+    """Run one or more worker ticks against the KOL-wizard job queue."""
+    import json as _json
+    from dataclasses import asdict
+
+    from sable_kol.jobs import run as run_worker
+
+    results = run_worker(job_type=job_type, max_jobs=max_jobs)
+
+    if as_json:
+        for r in results:
+            click.echo(_json.dumps(asdict(r)))
+        return
+
+    for r in results:
+        if not r.claimed:
+            click.echo(f"no claim (job_type={job_type})")
+            continue
+        click.echo(
+            f"job={r.job_id} outcome={r.job_outcome} "
+            f"steps_run={','.join(r.steps_run) or '-'}"
+            + (f" error={r.error}" if r.error else "")
+        )
+
+
 if __name__ == "__main__":
     cli()

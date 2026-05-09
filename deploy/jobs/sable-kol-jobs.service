@@ -1,0 +1,77 @@
+[Unit]
+Description=SableKOL — claim + run one queued job_type=kol_create job (any-project wizard worker)
+Documentation=https://github.com/sieggyby/SableKOL/blob/main/docs/any_project_wizard_plan.md
+After=network-online.target
+Wants=network-online.target
+
+# Production install layout (Hetzner CX21):
+#   /opt/sable/sable-kol/                — checkout of this repo
+#   /opt/sable/venv/                      — SHARED venv (sable-platform +
+#                                           sable + sable-kol all installed
+#                                           here; no nested .venv per repo)
+#   /opt/sable/clients/<id>.yaml          — per-client configs (worker writes)
+#   /opt/sable/outreach/<id>/             — outreach artifacts (worker writes)
+#   /var/log/sable-kol/jobs-runner.log    — JSON tick output if you redirect
+#
+# Operator install steps:
+#   1. Copy this file + the .timer to /etc/systemd/system/
+#   2. systemctl daemon-reload
+#   3. systemctl enable --now sable-kol-jobs.timer
+#   4. journalctl -u sable-kol-jobs.service -f to watch ticks
+#
+# Pairs with `sable-kol-jobs.timer` — fires every 60s with RandomizedDelaySec=10s.
+# Each tick claims at most ONE job (--max-jobs 1). SocialData rate limits make
+# parallelism counterproductive; sequential is the contract.
+
+[Service]
+Type=oneshot
+User=sable
+Group=sable
+
+Environment=SABLEKOL_HOME=/opt/sable/sable-kol
+Environment=PYTHONUNBUFFERED=1
+
+# Secrets — XAI_API_KEY + SABLE_DATABASE_URL + ANTHROPIC_API_KEY (regenerate
+# step calls Haiku via Slopper) — live in a separate root-owned file so they
+# never appear in the unit you might version-control. Create it once on the
+# box:
+#
+#   sudo install -d -m 0750 /etc/sable
+#   sudo tee /etc/sable/sable-kol-jobs.env >/dev/null <<'EOF'
+#   XAI_API_KEY=xai-...
+#   ANTHROPIC_API_KEY=sk-ant-...
+#   SABLE_DATABASE_URL=postgresql://sable:...@127.0.0.1:5432/sable
+#   EOF
+#   sudo chmod 0600 /etc/sable/sable-kol-jobs.env
+#   sudo chown root:sable /etc/sable/sable-kol-jobs.env
+#
+# Then reload systemd: `sudo systemctl daemon-reload`.
+EnvironmentFile=/etc/sable/sable-kol-jobs.env
+
+WorkingDirectory=/opt/sable/sable-kol
+
+# Claim + run one job_type=kol_create job per tick. --json so systemd journal
+# captures the per-tick TickResult as a JSON line.
+ExecStart=/opt/sable/venv/bin/sable-kol jobs run --job-type kol_create --max-jobs 1 --json
+
+# Hard cap per tick. SocialData cohort surveys are the slow path; one cohort
+# can take 5–10 minutes for a popular target. 30min is the upper bound for a
+# single survey_cohort step; anything longer = stuck, let the next tick reclaim.
+TimeoutStartSec=30min
+
+# Hardening (Hetzner deploy/DEPLOY.md pattern).
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/sable/clients /opt/sable/outreach /var/log/sable-kol
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictRealtime=true
+
+# Don't restart on failure — the timer fires every minute, no need to thrash.
+Restart=no
+
+[Install]
+WantedBy=multi-user.target

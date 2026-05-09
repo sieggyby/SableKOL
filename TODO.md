@@ -2,7 +2,7 @@
 
 **Source of truth:** `docs/any_project_wizard_plan.md` (v3, Codex-audited round 2). Read this BEFORE doing any work. Every task below references a section.
 
-**Last updated:** 2026-05-09, post Phase B landing.
+**Last updated:** 2026-05-09, post Phase C landing.
 
 **Scope:** This TODO tracks implementation of the any-project KOL wizard ONLY. It is NOT the global "what's next" tracker — for that, see `~/Projects/Sable_Slopper/TODO.md` per existing convention.
 
@@ -17,8 +17,10 @@
 - [x] **Phase B — Grok sidecar + preflight CLI** — committed 2026-05-09, greenlit
    - SableKOL `e32b428` — grok_api + preflight_service + schemas + CLI + Dockerfile + SIDECAR.md (36 new tests, 240 total pass)
    - SableWeb `74ac672` — docker-compose.yml sidecar block + DEPLOYMENT.md env docs
-- [ ] **Phase C — Claim helper + worker + reuse logic** — NEXT
-- [ ] Phase D — Wizard UI + status page
+- [x] **Phase C — Claim helper + worker + reuse logic** — committed 2026-05-09
+   - SablePlatform — `claim_next_job` + `complete_job`/`fail_job`/`release_job`/`defer_step` in `sable_platform/db/jobs.py` (13 new tests including 50-iteration race, 1237 total pass)
+   - SableKOL — `sable_kol/jobs.py` worker + `sable_kol/reuse.py` (refactor) + `sable_kol/wizard_orgs.py` org auto-create + `sable-kol jobs run` CLI subcommand + `deploy/jobs/` systemd units (18 new tests, 258 total pass)
+- [ ] Phase D — Wizard UI + status page — NEXT
 
 ---
 
@@ -103,42 +105,53 @@ NOT YET deployed to prod. Order: SablePlatform (Phase A migration 040) → Sable
 
 ---
 
-## Phase C — Claim helper + worker + reuse logic (~1.5 days)
+## Phase C — Claim helper + worker + reuse logic ✅ DONE 2026-05-09
 
 Plan section: "Worker model" + "Reuse detection".
 
-### SablePlatform — `claim_next_job` helper (the helper that does NOT exist yet)
-- [ ] Add `claim_next_job(conn, job_type, worker_id, stale_after_minutes=10)` to `sable_platform/db/jobs.py`. Dual-driver:
-   - Postgres: `SELECT ... FOR UPDATE SKIP LOCKED` + `UPDATE` in one tx
-   - SQLite: `BEGIN IMMEDIATE` + `UPDATE` with `RETURNING` (SQLite >= 3.35)
-   - Both bump `jobs.updated_at` and set `jobs.worker_id`
-   - Stale-reclaim path: re-claim `status='running' AND updated_at < (now - stale_after_minutes)`
-- [ ] Write `tests/db/test_claim_next_job.py`:
-   - Single claim, single complete, second claim returns None
-   - Two simultaneous claimers race test (run 100 iterations, exactly one wins each iteration)
-   - Stale reclaim: claim, set `updated_at` to 11 minutes ago, second claim succeeds
-   - Wrong job_type: claim with `job_type='other'` returns None even when KOL jobs are pending
-   - Both drivers (SQLite + Postgres parity)
+### SablePlatform — `claim_next_job` (and lifecycle helpers) ✅
+- [x] `sable_platform/db/jobs.py` — `claim_next_job(conn, job_type, worker_id, stale_after_minutes=10)` dual-driver:
+   - Postgres: `SELECT ... FOR UPDATE SKIP LOCKED` inside `UPDATE` subquery
+   - SQLite: `UPDATE ... WHERE job_id = (SELECT ... LIMIT 1) RETURNING` — single-statement atomicity, serialized by SQLite's database-level write lock
+   - Both bump `jobs.updated_at`, stamp `jobs.worker_id`, return `{job_id, config_json, org_id}`
+- [x] Companion lifecycle helpers in same module: `complete_job(job_id, result)`, `fail_job(job_id, error)`, `release_job(job_id)` (used when worker defers), `defer_step(step_id, retry_at_iso)` (sets `next_retry_at` for 429 backoff path).
+- [x] `tests/db/test_claim_next_job.py` — 13 tests including:
+   - Single claim → complete → second claim returns None
+   - Two-racer race test (50 iterations, file-backed SQLite + WAL + busy_timeout, exactly one wins each iteration)
+   - Stale reclaim (`updated_at` 11 min ago)
+   - Wrong job_type returns None even with pending KOL jobs
+   - `complete_job`/`fail_job`/`release_job`/`defer_step` round-trips
+   - Postgres parity test gated on `SABLE_TEST_POSTGRES_URL` (skipped in normal runs)
 
-### SableKOL — worker
-- [ ] Create `sable_kol/jobs.py`:
-   - Calls `claim_next_job(job_type='kol_create', worker_id=<uuid>)`
-   - Walks `job_steps` in order, persists `output_json` per step
-   - Honors `next_retry_at` (skip steps where `next_retry_at > now`)
-   - Step machine per plan: `enrich`, `suggest_comparable`, `reuse_check`, `survey_cohort_<handle>` × N, `write_yaml`, `regenerate`
-- [ ] Add `sable-kol jobs run` CLI subcommand (single-tick mode, called by systemd timer).
-- [ ] **Refactor `cohorts_to_fetch` out of `sable_kol/preflight_service.py`** (Phase B shipped it inside the FastAPI module). Move to `sable_kol/db.py` or a new `sable_kol/reuse.py`, import it from BOTH the sidecar AND the worker. Existing impl is dual-driver (`?` positional + ISO-8601 comparison) and tested via `tests/test_preflight_service.py::test_reuse_check_*` — those tests should keep passing post-refactor.
-- [ ] Implement org auto-create helper:
-   - Upsert `orgs(org_id, display_name, twitter_handle, status='inactive', config_json={"org_type":"prospect", "created_via":"kol_wizard", "wizard_job_id":<uuid>})`
-   - DO NOT use `org_type` or `is_active` columns (they don't exist on `orgs`)
-- [ ] Create `deploy/jobs/sable-kol-jobs.service` + `.timer` (60s tick, RandomizedDelaySec=10s).
+### SableKOL — worker ✅
+- [x] `sable_kol/jobs.py`:
+   - `run_one_tick()` claims one job, walks `job_steps` in order, dispatches to step handlers, finalizes
+   - Step handlers as a dispatch table (default real handlers + tests inject stubs)
+   - Step machine: `enrich` (3 retries), `suggest_comparable` (3), `reuse_check` (0), `survey_cohort_<handle>` (2), `write_yaml` (0), `regenerate` (1)
+   - `StepDeferred` exception → `defer_step` + `release_job` so 429 backoff defers cleanly
+   - Honors `next_retry_at`: pending step with future `next_retry_at` releases the job instead of running
+   - On retry-budget exhaustion → `fail_job`; below budget → `release_job` so next tick re-attempts
+- [x] `sable-kol jobs run --job-type kol_create --max-jobs 1 [--json]` CLI subcommand
+- [x] **`sable_kol/reuse.py`** — `cohorts_to_fetch` + `estimate_fetch_cost_usd` lifted out of `preflight_service.py` so the worker imports without dragging FastAPI in. Existing `tests/test_preflight_service.py::test_reuse_check_*` (8 tests) still pass post-refactor.
+- [x] **`sable_kol/wizard_orgs.py`** — `upsert_wizard_org()` upserts `orgs` with `status='inactive'` + `config_json={"org_type":"prospect", "created_via":"kol_wizard", "wizard_job_id":<uuid>}`. Idempotent: re-runs preserve operator-set `status='active'` and only refresh `wizard_job_id` + `twitter_handle`.
+- [x] `deploy/jobs/sable-kol-jobs.service` + `sable-kol-jobs.timer` + `README.md` — 60s tick, `RandomizedDelaySec=10s`, `OnBootSec=60s`, `--max-jobs 1`. Reads `XAI_API_KEY` + `ANTHROPIC_API_KEY` + `SABLE_DATABASE_URL` from `/etc/sable/sable-kol-jobs.env`.
 
-### Tests (per plan "Required tests" list)
-- [ ] **Worker resume idempotency**: kill worker after `survey_cohort_X`, restart, assert no duplicate SocialData fetches; regenerate completes.
-- [ ] **Cost-logging FK**: insert org, jobs row with `job_type='kol_create'`, cost_events row referencing the job → succeeds. FK violation when `job_id` is bogus.
+### Tests ✅
+- [x] `tests/test_jobs.py` — 14 worker tests covering happy path, resume idempotency (`TestResumeIdempotency.test_resume_after_kill_no_duplicate_survey` — kills worker post-`survey_cohort_metafactory`, asserts second tick re-runs only `survey_cohort_rtfkt` + `write_yaml` + `regenerate` and finishes), retry-then-release, retry-exhaustion → fail, deferred-step release, deferred-step skip-when-future, no-claim tick.
+- [x] `TestCostLoggingFK.test_cost_event_with_kol_create_job_id_succeeds` + `test_cost_event_with_bogus_job_id_violates_fk` — FK enforced on both directions.
+- [x] `TestUpsertWizardOrg` — creates inactive prospect, idempotent across promotion.
+- [x] `TestReuseModuleExports` — sanity check `sable_kol.reuse` exports + that the refactor didn't drop the symbol from `preflight_service`.
 
-### Phase C demo
-Operator manually creates `jobs` + `job_steps` rows via Python REPL; worker picks them up via `claim_next_job`, runs end-to-end, generates YAML at `/opt/sable/clients/<slug>.yaml`, regenerate produces graph at `/opt/sable/outreach/<slug>/`. Run two workers in parallel — exactly one claims any given job.
+### Phase C demo ✅
+Operator manually creates `jobs` + `job_steps` rows via Python REPL; the worker picks up via `claim_next_job`, walks the step machine, completes the job. Race test proves two workers can't double-claim. Resume idempotency test proves a crash mid-run doesn't double-fetch SocialData.
+
+### Phase C deploy
+
+NOT YET deployed to prod. Order when deploy is greenlit (combines Phase A + B + C):
+1. SablePlatform `alembic upgrade head` against the live Postgres DB
+2. SableKOL `git pull` + `docker build -f SableKOL/Dockerfile.preflight -t sable-kol-preflight:latest .` from `/opt/sable` parent
+3. SableKOL systemd timer install: `sudo cp deploy/jobs/sable-kol-jobs.{service,timer} /etc/systemd/system/ && sudo systemctl daemon-reload && sudo systemctl enable --now sable-kol-jobs.timer` — first create `/etc/sable/sable-kol-jobs.env` with `XAI_API_KEY` + `ANTHROPIC_API_KEY` + `SABLE_DATABASE_URL`
+4. SableWeb `git pull` + `docker-compose up -d`. `XAI_API_KEY` and `SABLE_SERVICE_TOKEN` must be in `/opt/sable/.env` BEFORE compose up.
 
 ---
 

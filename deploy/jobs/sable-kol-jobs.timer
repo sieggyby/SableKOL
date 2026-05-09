@@ -1,0 +1,27 @@
+[Unit]
+Description=SableKOL job runner — 60s tick for the any-project KOL wizard worker
+Documentation=https://github.com/sieggyby/SableKOL/blob/main/docs/any_project_wizard_plan.md
+
+[Timer]
+# Fire 60 seconds after boot, then every 60 seconds thereafter. Each tick is
+# bounded — see TimeoutStartSec on the .service. If a tick is still running
+# when the next one fires, systemd waits per Type=oneshot semantics.
+OnBootSec=60s
+OnUnitActiveSec=60s
+
+# Persistent=false: a missed tick is fine — the next 60s tick picks up any
+# pending or stale-running job. We do not need to fire-on-boot for missed
+# ticks the way the daily regenerate timer does.
+Persistent=false
+
+# Stagger 0-10s so we don't synchronize with the daily 03:00 regenerate
+# timer when both happen to be due simultaneously.
+RandomizedDelaySec=10s
+
+Unit=sable-kol-jobs.service
+
+# So `systemctl list-timers` shows it.
+AccuracySec=15s
+
+[Install]
+WantedBy=timers.target
