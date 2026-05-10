@@ -14,7 +14,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from sable_kol.persona_priming import PersonaSlug
 
 
 SignalSource = Literal["grok_xai_live", "operator_manual"]
@@ -56,9 +58,19 @@ class ComparableProject(BaseModel):
     """One Grok-suggested similar-audience project.
 
     Used in Step 3 of the wizard. ``handle`` is the bare X handle (no @).
+
+    ``handle_verified`` is Grok's self-reported confidence that it actually
+    visited the live X profile (vs. composing a plausible-sounding handle
+    from the project name). Defaults to True for back-compat with older
+    prompts that didn't ask for verification, but the current
+    ``_build_comparable_prompt`` in ``grok_api.py`` requires it explicitly
+    after Grok hallucinated 3/6 TIG comparables on 2026-05-10
+    (`bittensor_` suspended, `eleutherai` 404, `gensynnetwork` 404).
+    Operators should re-validate either way before paid extraction.
     """
 
     handle: str
+    handle_verified: bool = True
     rationale: str
     shared_themes: list[str] = Field(default_factory=list)
 
@@ -114,7 +126,21 @@ class EnrichedHandle(BaseModel):
 
 
 class PreflightRequest(BaseModel):
+    """Inbound payload for the sidecar /preflight endpoint.
+
+    The three optional priming fields (``context``, ``exclude_handles``,
+    ``allow_non_crypto_research``) mirror the keyword args on
+    ``build_preflight_response`` so the SableWeb wizard can plumb operator
+    priming through Step 1. ``context`` disambiguates thin bios;
+    ``exclude_handles`` keeps other Sable-managed clients out of the
+    comparable-projects pool; ``allow_non_crypto_research`` relaxes the
+    "non-crypto consumer brands" exclusion for research-leaning clients.
+    """
+
     handle: str
+    context: str | None = None
+    exclude_handles: list[str] | None = None
+    allow_non_crypto_research: bool = False
 
 
 class PreflightResponse(EnrichedHandle):
@@ -129,8 +155,18 @@ class PreflightResponse(EnrichedHandle):
 
 
 class SuggestComparableRequest(BaseModel):
+    """Inbound payload for /suggest-comparable.
+
+    Same priming-flag surface as :class:`PreflightRequest`, used when the
+    operator changes themes mid-wizard and re-runs only the comparable
+    suggestion pass.
+    """
+
     handle: str
     themes: list[str] = Field(default_factory=list)
+    context: str | None = None
+    exclude_handles: list[str] | None = None
+    allow_non_crypto_research: bool = False
 
 
 class SuggestComparableResponse(BaseModel):
@@ -156,3 +192,56 @@ class ReuseCheckResponse(BaseModel):
     must_fetch: list[str] = Field(default_factory=list)
     estimated_cost_usd: float = 0.0
     freshness_days: int = 180
+
+
+# ---------------------------------------------------------------------------
+# Cold-intro draft (KO-3) — per-candidate Grok-drafted opener
+# ---------------------------------------------------------------------------
+
+
+class CandidateIntroSignal(BaseModel):
+    """Whitelisted bank signal sent to Grok for a per-candidate cold-intro draft.
+
+    Pydantic ``extra='forbid'`` — anything the SableWeb route fails to
+    strip is rejected at the API boundary instead of silently leaking to
+    xAI. The list of fields here is the contract: changing it requires a
+    matching change in the SableWeb assembler and the Zod mirror.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    handle: str
+    display_name: str | None = None
+    bio_snapshot: str | None = Field(default=None, max_length=400)
+    archetype: str | None = None
+    sector_tags: list[str] = Field(default_factory=list)
+    top_signals: list[str] = Field(default_factory=list, max_length=5)
+    cluster_label: str | None = None
+    tier: str | None = None
+
+
+class ColdIntroRequest(BaseModel):
+    """Inbound payload for the sidecar /draft-intro endpoint."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    handle: str
+    persona: PersonaSlug
+    project_context: str = Field(default="", max_length=600)
+    candidate_signal: CandidateIntroSignal
+
+
+class ColdIntroDraft(BaseModel):
+    """Outbound payload for the sidecar /draft-intro endpoint.
+
+    ``intro_text`` is capped at 320 chars (covers the ≤280 plan target plus
+    a small allowance for line breaks). ``suggested_angle`` is one short
+    line of operator-facing reasoning — what bank signal this draft leans
+    on — which the UI surfaces under the opener.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    intro_text: str = Field(max_length=320)
+    suggested_angle: str = Field(max_length=200)
+    signal_metadata: SignalMetadata
