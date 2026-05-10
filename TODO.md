@@ -5,7 +5,7 @@
 **For shipped work**, see [`docs/AUDIT_LOG.md`](docs/AUDIT_LOG.md).
 **For design rationale of the any-project wizard**, see [`docs/any_project_wizard_plan.md`](docs/any_project_wizard_plan.md).
 
-**Last updated:** 2026-05-09 — wizard live in prod; KO-1 (preflight context flags) shipped in `6551693`, KO-2 (KOLNetwork zoom + pan) shipped in SableWeb `af8dbbe`. See audit log for the full picture of what's live.
+**Last updated:** 2026-05-10 — wizard live in prod; KO-1 + KO-2 shipped (`6551693` and SableWeb `af8dbbe`); KO-3 plan stable at v3 + post-self-audit corrections (correct Layer 0 file, migration-window mtime fallback, forced-regenerate as deploy step, org-wide cost ceiling). Ready to build on operator greenlight.
 
 ---
 
@@ -52,10 +52,10 @@ Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we 
 
 **Architecture (mirrors the wizard sidecar pattern; no new infra, no new DB tables):**
 
-#### Layer 0 — `sable_kol/outreach_plan.py` (new field)
-- `to_json_payload(targets, *, generated_at_utc: str | None = None)` adds an `_meta` block: `{schema_version: 1, generated_at_utc, target_count}`. Backwards-compatible default = `datetime.now(UTC).isoformat()`.
-- Update the deploy/regenerate writer to pass an explicit timestamp (or rely on the default) and re-emit existing leads files at next regenerate cadence.
-- Test: `test_outreach_plan_meta_block` asserts `_meta.generated_at_utc` ISO-8601-Z and that schema_version is stable.
+#### Layer 0 — `scripts/build_outreach_plan.py` (one-line patch)
+- Real `leads.json` writer is `scripts/build_outreach_plan.py`, not `outreach_plan.py`. The `_meta` block lives at line 443-457 (`payload["meta"]`) and is propagated to `leads.json` via line 513-516. **Add `"generated_at_utc": datetime.now(UTC).isoformat()`** to that meta dict (and the `from datetime import UTC, datetime` import). Both `report.json` and `leads.json` get the field for free.
+- **Migration window:** existing leads files in prod were written before this patch and have no `generated_at_utc`. SableWeb route handles this gracefully: if `_meta` exists but `generated_at_utc` is missing, fall back to the file's `stat().mtime` and label the input-freshness UI line as "approximate (file mtime)". Phase 4 deploy step explicitly forces a regenerate of all known clients to backfill.
+- Test: new `tests/test_build_outreach_plan_meta.py::test_meta_includes_generated_at_utc` asserts the field is ISO-8601-Z and present in both report.json and leads.json output paths.
 
 #### Layer 1 — `sable_kol/grok_api.py`
 - `draft_cold_intro(handle, persona, project_context, candidate_signal) -> ColdIntroDraft`. Pydantic-validated input + output. Reuses `_post_chat` so retry policy stays single-source: **5xx 1 retry, 429 3 attempts** (matches the live helper — Codex round 2 fix).
@@ -86,7 +86,7 @@ Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we 
 - `withWizardGate(DRAFT_INTRO_AUDIT_ENDPOINT)` for the 4-email KOL allowlist + IP audit.
 - **Quota check before sidecar fetch.** `checkDraftIntroQuota(email)` counts `kol_create_audit` rows where `outcome='allowed'` AND `endpoint=DRAFT_INTRO_AUDIT_ENDPOINT` in the last 24h. Cap 50/operator/24h. Returns 429 + records `quota_exceeded` audit row, sidecar NOT called.
 - Body: `{handle: str}`. Resolution:
-  - Load `leads.json` for `clientId`. If file missing or `_meta.generated_at_utc` absent → 503.
+  - Load `leads.json` for `clientId`. If file missing → 503. If file present but `_meta.generated_at_utc` absent → use `fs.stat().mtime` as approximate freshness, flag `input_freshness.approximate=true` in the response so the UI can render "approximate (file mtime)". (Migration-window grace; once Layer 0 ships and clients regenerate, every leads file will carry the canonical timestamp and `approximate` will always be false.)
   - Find `target` where `target.handle == request.handle`. If absent → 404 `{error: "handle_not_in_leads"}`.
   - If found but `target.candidate_id is null` → 409 `{error: "candidate_pending_classification"}`.
   - Otherwise JOIN against `kol_candidates(candidate_id)` for bio + sector_tags.
@@ -94,7 +94,7 @@ Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we 
   - Whitelist into `CandidateIntroSignal` (extras dropped before send so server-side is defense-in-depth).
 - Persona looked up from `session.email`; if `placeholder=true` (i.e. ben), 409 short-circuit before sidecar. (Same outcome the sidecar would return; checked early to save a roundtrip.)
 - Forwards `ColdIntroRequest` to sidecar via `fetchSidecar()`.
-- Returns `{draft: ColdIntroDraft, input_freshness: {generated_at_utc: leads._meta.generated_at_utc}}`.
+- Returns `{draft: ColdIntroDraft, input_freshness: {generated_at_utc: <canonical or mtime>, approximate: bool}}`.
 
 #### Layer 6 — SableWeb UI
 - Modify existing `src/components/ops/KOLTagPanel.tsx`. Server page now passes `canDraftIntro: boolean`, `personaSlug: PersonaSlug | null`, `nodeRole: string` props through `KOLNetwork` to `KOLTagPanel` (Codex round 2 fix — these props don't exist today). Server page is the only place with session info.
@@ -106,7 +106,7 @@ Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we 
 - One Grok call per click; complete-or-fail; no streaming.
 - Daily quota: **50 attempts/operator/24h** (not "drafts" — wording matches what `outcome='allowed'` actually counts: gate-passed attempts, including ones that 5xx from xAI). Codex round 2 fix.
 - Audit endpoint matched via the shared `DRAFT_INTRO_AUDIT_ENDPOINT` constant (no string drift across `withWizardGate` / `recordAudit` / `checkDraftIntroQuota`).
-- Per-call cost: **$0.005-0.01 expected** (prompt-policy transform; xAI may invoke its own search at discretion). Daily ceiling per operator at 50 attempts: **~$0.50**. If xAI exposes an enforced no-search request param, switch and revisit ceiling.
+- Per-call cost: **$0.005-0.01 expected** (prompt-policy transform; xAI may invoke its own search at discretion). Daily ceiling per operator at 50 attempts: **~$0.50**. **Org-wide ceiling at 4 KOL allowlist operators: ~$2.00/day** worst-case. If xAI exposes an enforced no-search request param, switch and revisit ceiling.
 
 **Privacy / prompt-injection boundary (Codex critical):**
 - Field whitelist in `grok_api.draft_cold_intro` AND in the SableWeb route's signal-assembly. Never send: relationship_notes, last_dm_text, internal tags, operator scratchpad, anything not in `CandidateIntroSignal`.
@@ -185,7 +185,7 @@ Cross-repo persona-mirror lockstep test: SableWeb test reads the persona manifes
 - **Phase 1 (~3h)** — `grok_api.draft_cold_intro` + `persona_priming.py` + `CandidateIntroSignal` schema (with `extra='forbid'`) + 8 grok_api tests + 4 persona tests. Standalone CLI verbs `sable-kol draft-intro` and `sable-kol persona-manifest --json`.
 - **Phase 2 (~3h)** — sidecar `/draft-intro` + 6 sidecar tests. **Bundle KO-1.b** sidecar passthrough explicitly into the same commit.
 - **Phase 3 (~5h)** — SableWeb: `DRAFT_INTRO_AUDIT_ENDPOINT` constant + route + leads.json resolver + JOIN against kol_candidates + KOLTagPanel prop wiring + Zod schemas + persona-manifest fixture + 11 route tests + 6 component tests + cross-repo persona-mirror lockstep.
-- **Phase 4 (~2h)** — manual 16-draft smell-test (15 real + 1 ben-blocked), prod deploy, doc updates (`SIDECAR.md` for `/draft-intro` route, `.env.example` if any new env vars, `docs/AUDIT_LOG.md` after merge, `outreach_plan.py` docstring update for `_meta`).
+- **Phase 4 (~2h)** — manual 16-draft smell-test (15 real + 1 ben-blocked), prod deploy, **forced regenerate of all known clients** (`for client in $(ls /sable/outreach); do python scripts/build_outreach_plan.py --client "$client" --refresh; done`) to backfill `_meta.generated_at_utc`, doc updates (`SIDECAR.md` for `/draft-intro` route, `docs/AUDIT_LOG.md` after merge, `scripts/build_outreach_plan.py` docstring update). **No new env vars** — `XAI_API_KEY` + `SABLE_SERVICE_TOKEN` already in `/opt/sable/.env` from the wizard rollout.
 
 **Defer until:** operator says "go" or active outreach surfaces a clear bottleneck. KO-1.b is a hard prerequisite folded into Phase 2.
 
@@ -226,7 +226,17 @@ Cross-repo persona-mirror lockstep test: SableWeb test reads the persona manifes
 | **Maintainability:** persona TS↔Python lockstep brittle | New `sable-kol persona-manifest --json` CLI emits the manifest. Fixture committed at `tests/fixtures/persona_manifest.json`. Vitest reads the fixture; CI regenerates it pre-test. No regex parsing. |
 | **Polish:** missing negative-path tests | Test contract grew to 11 SableWeb route tests + 6 component tests covering: handle absent, candidate pending, leads stale, ben blocked, quota key match, no-button on non-candidate roles, in-flight disable, error state. |
 
-**Net additions from round 2:** Layer 0 outreach_plan `_meta` patch (~30min); two new failure modes (404 handle absent, 409 candidate pending, 503 leads stale); audit endpoint constant; Pydantic `extra='forbid'`; persona manifest CLI + fixture. Phasing moved 1.5d → 2d.
+**Net additions from round 2:** Layer 0 `_meta` patch (now correctly identified as `scripts/build_outreach_plan.py:443`, not `outreach_plan.py`); three new failure modes (404 handle absent, 409 candidate pending, 503 leads file missing); migration-window mtime fallback; audit endpoint constant; Pydantic `extra='forbid'`; persona manifest CLI + fixture; forced-regenerate as Phase 4 deploy step. Phasing moved 1.5d → 2d.
+
+#### Self-audit corrections (post round 2, pre-build)
+
+I re-walked the v3 spec against live code before writing it off. Three corrections folded in above:
+
+1. **Layer 0 fix location was wrong in the round-2 response.** I attributed `_meta` construction to `outreach_plan.to_json_payload()`. It's actually `scripts/build_outreach_plan.py:443-457`. The patch is a one-line addition there, not a signature change to `to_json_payload`. Both `report.json` and `leads.json` receive the field via the existing `payload["meta"]` propagation at line 513-516.
+2. **Migration-window 503 was too aggressive.** Round-2 said "503 if `_meta.generated_at_utc` missing". That would 503 every existing client until next regenerate. Replaced with a graceful `fs.stat().mtime` fallback flagged as `approximate=true`. Phase 4 forces a regenerate of all clients to backfill canonical timestamps.
+3. **Phase 4 deploy step under-specified.** Round-2 hand-waved "doc updates if any new env vars". Locked: no new env vars, but a forced-regenerate loop is required to backfill `_meta.generated_at_utc` across all known clients (`/sable/outreach/*`).
+
+**Org-wide cost ceiling now explicit:** 4 KOL-allowlist operators × 50 attempts/24h × $0.01 worst-case = **~$2.00/day** org-wide. Comparable to wizard preflight envelope.
 
 **What v3 does NOT change from v2:** core architectural decisions (sidecar pattern, withWizardGate idiom, AGENTS interpretive-signal labeling, ephemeral drafts, prompt-policy transform-only intent, locked-to-own-persona). Round-2 issues were all about implementation surface, not architecture.
 
