@@ -559,12 +559,14 @@ def _build_enrich_candidate_prompt(
     backs commonality computation is what gets sent to xAI.
     """
     profile_block = operator_profile_block(persona)
+    op_priming = priming_for(persona)
+    operator_x_handle = op_priming.twitter_handle or persona  # fallback to slug if X handle unknown
     bank_json = bank_signal.model_dump_json()
     context_block = (
         f"\nPROJECT CONTEXT (operator-supplied):\n{project_context.strip()}\n"
         if project_context else ""
     )
-    return f"""You are gathering INTEL for Sable operator @{persona} so they can write their own thoughtful cold-outreach DM to @{handle}. You are NOT writing the DM — you are giving the operator the information they need: who this person is, what they care about, where they overlap with the operator, and how to think about reaching out.
+    return f"""You are gathering INTEL for Sable operator {op_priming.display_name} (@{operator_x_handle} on X) so they can write their own thoughtful cold-outreach DM to @{handle}. You are NOT writing the DM — you are giving the operator the information they need: who this person is, what they care about, where they overlap with the operator, and how to think about reaching out.
 
 {profile_block}
 {context_block}

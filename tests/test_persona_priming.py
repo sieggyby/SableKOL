@@ -81,10 +81,12 @@ def test_operator_profile_block_renders_named_sections():
     Grok can compute commonality. Format is Markdown-ish bullets."""
     block = operator_profile_block("arf")
     assert "OPERATOR PROFILE" in block
-    assert "@arf" in block
+    # Header carries display_name + twitter_handle so Grok knows the
+    # operator's actual on-platform identity for mutual lookups.
+    assert "Arf" in block
+    assert "@CahitArf11" in block
     assert "themes:" in block
     assert "communities:" in block
-    # voice_signature is included for real personas
     assert "voice_signature:" in block
 
 

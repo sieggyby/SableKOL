@@ -501,7 +501,9 @@ def test_enrich_prompt_includes_operator_profile_block(monkeypatch):
         bank_signal=_bank_signal(), client=client,
     )
     prompt = captured[0]
-    assert "OPERATOR PROFILE — @arf" in prompt
+    # Header now carries display_name + twitter_handle.
+    assert "OPERATOR PROFILE — Arf" in prompt
+    assert "@CahitArf11" in prompt
     assert "communities:" in prompt
 
 
@@ -525,7 +527,9 @@ def test_enrich_prompt_per_persona_includes_their_profile(persona, monkeypatch):
     prompt = captured[0]
     p = priming_for(persona)
     assert p.voice_signature in prompt
-    assert f"@{persona}" in prompt
+    # Header carries display_name. twitter_handle present when set;
+    # display_name fallback when empty (Sparta is unfilled at time of writing).
+    assert p.display_name in prompt
 
 
 def test_enrich_candidate_5xx_succeeds_on_attempt_2(monkeypatch):

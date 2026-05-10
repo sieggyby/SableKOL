@@ -52,40 +52,51 @@ class PersonaPriming:
     handle, a real first name, or a nickname. Used in the system prompt's
     framing line ("you are drafting intel for operator @arf to read")."""
 
-    real_name: str | None
+    twitter_handle: str = ""
+    """Operator's actual X handle without the @ prefix. Distinct from
+    `display_name` because the conversational name (e.g. "Arf") often
+    differs from the X handle (e.g. "CahitArf11"). Grok needs the real
+    handle to do live X mutual-overlap lookups: "does the target follow
+    @CahitArf11" etc. Empty string is treated as 'unknown' — Grok will
+    fall back to `display_name` in that case."""
+
+    real_name: str | None = None
     """Real legal name, if operator OK with it being sent to xAI for
     commonality matching ("did the target tweet mentioning operator's real
     name?"). Null for operators who prefer pseudonymity even toward Grok."""
 
-    location: str
+    location: str = ""
     """Geo. Free text — "NYC", "Lagos / Berlin axis", "PNW". Used both for
     geographic commonality (target is also in city X) and for cultural
     inference (PNW-coded posting register, etc.)."""
 
-    bio: str
-    """Public-ish bio. ≤300 chars. What the operator tells the world they
+    bio: str = ""
+    """Public-ish bio. ≤800 chars. What the operator tells the world they
     are. Drives Grok's read on what topics + register the operator can
-    plausibly engage with."""
+    plausibly engage with. (Originally capped at 300 chars; bumped to 800
+    on 2026-05-10 when filling out Arf's profile — the richness was
+    paying for itself in commonality output and the prompt token budget
+    is comfortable.)"""
 
     themes: list[str] = field(default_factory=list)
-    """Up to 6 short tags describing what the operator posts about. Drives
+    """Up to 10 short tags describing what the operator posts about. Drives
     theme-overlap detection with target.recent_themes. e.g.
-    ["NFTs", "fashion-crypto", "FWB-era discourse", "DAO governance"]."""
+    ["crypto", "stocks", "tech", "memes", "AI / LLM research", "politics"]."""
 
     likes: list[str] = field(default_factory=list)
-    """Up to 6 tight phrases describing what the operator likes / aligns
-    with. e.g. ["typewriter aesthetics", "low-ego curators", "open-source
-    AI bias"]. Operator-side of the likes-overlap commonality field."""
+    """Up to 6 tight phrases describing what resonates with the operator
+    when they see it in someone else's TL. e.g. ["indie music", "philosophy",
+    "sci-fi"]. Operator-side of the likes-overlap commonality field."""
 
     dislikes: list[str] = field(default_factory=list)
-    """Up to 4 tight phrases. e.g. ["VC-coded threads", "AI-PFP
-    accounts"]. Used in the "do not pitch as if X" inverse-commonality
-    signal."""
+    """Up to 4 tight phrases. e.g. ["VC-coded threads", "AI slop",
+    "credential-flexing"]. Used in the "do not pitch as if X"
+    inverse-commonality signal."""
 
     communities: list[str] = field(default_factory=list)
-    """Up to 6 named communities the operator participates in. e.g.
-    ["FWB", "ARKN", "Sable", "Friends With Benefits cohort", "specific
-    Discord servers"]. Drives mutual-community detection."""
+    """Up to 10 named communities the operator participates in. e.g.
+    ["FWB", "Multisynq", "Solana staking ecosystem", "Welfare Warriors discord"].
+    Drives mutual-community detection."""
 
     notable_mutuals: list[str] = field(default_factory=list)
     """Up to 10 bare X handles (no @) the operator interacts with regularly.
@@ -109,32 +120,88 @@ class PersonaPriming:
 
 
 # --- ARF ---
-# TODO: Sieggy is providing real values via the grill-me round. Until
-# they land, the priming is intentionally sparse — Grok gets just
-# enough signal to differentiate Arf from Sparta in the prompt without
-# fabricating commonality from thin air. Update via PR when filled.
+# Filled out 2026-05-10 via grill-me round with Sieggy. Arf is anonymous
+# (real_name null intentionally). The bio captures the most load-bearing
+# nuance: history major + MBA but allergic to credentialism — Grok needs
+# to know not to lean on either when computing commonality. Mutual list
+# is the actively-engaged set, not the comprehensive follow graph.
 ARF = PersonaPriming(
-    display_name="arf",
+    display_name="Arf",
+    twitter_handle="CahitArf11",
     real_name=None,
-    location="<TBD>",
-    bio="Sable operator. Crypto-native cultural curator. <TBD: fill in via PR>",
-    themes=["crypto culture", "fashion-crypto"],
-    likes=["low-ego curators"],
-    dislikes=["VC-coded threads"],
-    communities=["Sable", "ARKN"],
-    notable_mutuals=[],
-    values=["open-source bias"],
+    location="NYC/Istanbul/Miami",
+    bio=(
+        "Sable operator, former community manager in crypto for Solana "
+        "projects and Monad projects. Generally interested in "
+        "stocks/crypto/technology, politics are center left and tends "
+        "to like music/sports/movies that are a little off the beaten "
+        "path. Dark sense of humor. Arf might say he's a storyteller, "
+        "but he'd never tweet that. He's a serious person but never "
+        "takes himself seriously on the TL. History major and MBA "
+        "holder, though credentialism is antithetical to Arf's essence."
+    ),
+    themes=[
+        "crypto",
+        "stocks",
+        "tech",
+        "sports",
+        "music",
+        "off-beat film",
+        "memes",
+        "monad memes",
+        "AI / LLM research",
+        "politics",
+    ],
+    likes=[
+        "indie music",
+        "house music",
+        "jazz music",
+        "philosophy",
+        "sci-fi",
+    ],
+    dislikes=[
+        "VC-coded threads",
+        "credential-flexing",
+        "AI slop",
+        "prejudicial language / bigotry",
+    ],
+    communities=[
+        "FWB",
+        "Multisynq",
+        "Solana staking ecosystem",
+        "Welfare Warriors discord",
+        "Monad ecosystem OG",
+        "Arbitrum",
+        "Ethereum",
+        "Kamigotchi",
+    ],
+    notable_mutuals=[
+        "p0isonxs",
+        "0xWoah",
+        "monasex_1",
+        "billmondays",
+        "0xDaes",
+    ],
+    values=[
+        "anti-credentialism",
+        "anti-grift",
+        "intellectually serious without ego",
+        "off-beat over mainstream",
+    ],
     voice_signature=(
-        "warm crypto-native, peer-level observation before the pitch, "
-        "lowercase-leaning, allergic to corporate phrasing"
+        "warm crypto-native peer-level register, dark humor under the "
+        "surface, lowercase-leaning. observations land before the ask. "
+        "allergic to corporate phrasing or anything that smells like a "
+        "SaaS template."
     ),
 )
 
 
 # --- SPARTA ---
-# TODO: Sieggy is providing real values via the grill-me round.
+# TODO: Sieggy is providing real values via the grill-me round (next).
 SPARTA = PersonaPriming(
     display_name="sparta",
+    twitter_handle="",  # TBD
     real_name=None,
     location="<TBD>",
     bio="Sable operator. Founder-to-founder communicator. <TBD: fill in via PR>",
@@ -154,6 +221,7 @@ SPARTA = PersonaPriming(
 # --- BEN ---
 BEN = PersonaPriming(
     display_name="ben",
+    twitter_handle="",
     real_name=None,
     location="<placeholder>",
     bio="<placeholder — operator must supply>",
@@ -230,10 +298,16 @@ def operator_profile_block(slug: PersonaSlug) -> str:
     no hidden fields, no shape drift. Returns a string; caller embeds.
     """
     p = priming_for(slug)
+    # Render header with X handle when known so Grok can do mutual-overlap
+    # lookups against the operator's actual on-platform identity. Fall back
+    # to display_name when twitter_handle is empty (e.g. unfilled profile).
+    header_handle = f"@{p.twitter_handle}" if p.twitter_handle else f"@{p.display_name}"
     lines: list[str] = [
-        f"OPERATOR PROFILE — @{p.display_name}",
+        f"OPERATOR PROFILE — {p.display_name} ({header_handle} on X)",
         f"- display_name: {p.display_name}",
     ]
+    if p.twitter_handle:
+        lines.append(f"- twitter_handle: @{p.twitter_handle}")
     if p.real_name:
         lines.append(f"- real_name: {p.real_name}")
     if p.location:
