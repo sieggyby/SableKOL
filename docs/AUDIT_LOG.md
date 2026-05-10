@@ -44,6 +44,7 @@ The wizard takes a Twitter handle, runs Grok preflight (enrich + suggest compara
 - `77f5237` — Bumped xAI client timeouts 30s → 90s for `enrich_handle` + `suggest_comparable_projects` + builder helpers. Added `field_validator` to coerce `None` → `""` for `bio` and `audience_archetype` (Grok returns `null` for unknown fields, breaking Pydantic validation).
 - `9f20e42` — Replaced 11 occurrences of SQLite-only `datetime('now')` with portable `CURRENT_TIMESTAMP` across `sable_kol/{db.py,enrich.py,grok_import.py,cross_platform.py,socialdata_bulk.py}`. Found when bulk-fetch tried `mark_run_completed` against Postgres prod.
 - `bd5794d` — Cost accounting rebase: SocialData charges per-RESULT (not per-page). Replaced `COST_USD_PER_PAGE = 0.002` with `COST_USD_PER_RESULT = 0.0002`; logged costs were ~3× actual. Memory `feedback_cost_estimate_framing.md` rewritten.
+- `8488f38` (2026-05-10) — Grok-null-boolean coercion. Grok occasionally returns `null` for `verified` / `is_active` / `real_name_known` when live-X observation can't determine the value; Pydantic was rejecting with bool_type validation error and taking the whole preflight down. Pre-coerced on the way in: `is_active` defaults True (account exists unless proven otherwise); `verified` and `real_name_known` default False.
 - **SableWeb** `ee5fb87` — Bumped grok-2-latest → grok-4-latest in test fixture strings.
 
 ### Verification — wizard live in prod
