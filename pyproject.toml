@@ -35,9 +35,17 @@ paid-enrich = [
 # The sidecar's Dockerfile installs sable-kol[service]; the CLI install does
 # NOT pull these in by default (they're a multi-MB dep set the CLI doesn't
 # need). Tests using TestClient pytest.importorskip this extra.
+#
+# psycopg2-binary is included so the sidecar can write to prod Postgres
+# when invoked via `docker compose exec sable-kol-preflight sable-kol
+# bulk-fetch ...`. SQLAlchemy 2.x defaults to psycopg2 when given a plain
+# `postgresql://` URL, which is what /opt/sable-web/.env carries. Without
+# this, every CLI command that touches the DB raises
+# `ModuleNotFoundError: No module named 'psycopg2'` inside the container.
 service = [
     "fastapi>=0.110",
     "uvicorn[standard]>=0.27",
+    "psycopg2-binary>=2.9",
 ]
 
 [project.scripts]
