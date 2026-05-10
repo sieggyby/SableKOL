@@ -1,11 +1,58 @@
 """Tests for sable_kol.outreach_plan — tiering, broker fields, serialization."""
 from __future__ import annotations
 
+import importlib.util
+import json
+import re
+from pathlib import Path
+
 import pytest
 
+from sable_kol.client_config import (
+    AxisConfig,
+    ClientConfig,
+    NetworkAxes,
+    TierThreshold,
+    TierThresholds,
+)
 from sable_kol.db import Candidate
 from sable_kol.follow_graph import Cluster, CoFollowMatrix
 from sable_kol import outreach_plan as op
+
+
+def _load_build_outreach_plan_module():
+    """Import scripts/build_outreach_plan.py as a module for direct testing."""
+    path = Path(__file__).parent.parent / "scripts" / "build_outreach_plan.py"
+    spec = importlib.util.spec_from_file_location("build_outreach_plan", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _minimal_client_config() -> ClientConfig:
+    """Empty-but-valid ClientConfig — enough to drive _generate_run end-to-end."""
+    return ClientConfig(
+        client_id="testco",
+        display_name="TestCo",
+        mode="stealth",
+        debut_date=None,
+        sector_focus=[],
+        themes=[],
+        audiences=[],
+        manual_pins=[],
+        org_denylist_extras=[],
+        person_allowlist_extras=[],
+        celebrity_denylist_extras=[],
+        network_axes=NetworkAxes(
+            x=AxisConfig(label="x-axis", keywords=["k"]),
+            y=AxisConfig(label="y-axis", keywords=["k"]),
+        ),
+        tier_thresholds={
+            "stealth": TierThresholds(),
+            "public": TierThresholds(),
+        },
+        raw={},
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -225,3 +272,76 @@ def test_to_csv_rows_default_template_when_no_cluster(db_conn):
     plan = op.build_plan(db_conn, candidates=candidates)
     rows = op.to_csv_rows(plan)
     assert rows[0]["suggested_template_id"] == "default"
+
+
+# ---------------------------------------------------------------------------
+# scripts/build_outreach_plan.py — meta block (KO-3 Phase 0)
+# ---------------------------------------------------------------------------
+
+# Accepts both `+00:00` and `Z` suffixes — we normalise to `Z` but allow either.
+_ISO_8601_Z = re.compile(
+    r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|\+00:00)$"
+)
+
+
+def test_build_outreach_plan_meta_includes_generated_at_utc(db_conn, tmp_path):
+    """Both report.json and leads.json carry _meta.generated_at_utc as ISO-8601-Z.
+
+    Drives `_generate_run` then `_write_variant` through the script directly so
+    we exercise the same code path the deploy timer hits in prod. Uses an
+    empty bank — the meta block is built unconditionally regardless of how
+    many targets land in the payload.
+    """
+    mod = _load_build_outreach_plan_module()
+    config = _minimal_client_config()
+    payload, csv_rows, kings_payload = mod._generate_run(
+        db_conn,
+        config=config,
+        mode="stealth",
+        top_k=10,
+        include_orgs=False,
+        include_celebs=False,
+        kings=[],
+        co_follow_matrix=CoFollowMatrix(rows=[], cols=[], follows_by_row=[]),
+        clusters=[],
+    )
+
+    # Meta block carries the canonical timestamp.
+    assert "generated_at_utc" in payload["meta"]
+    ts = payload["meta"]["generated_at_utc"]
+    assert _ISO_8601_Z.match(ts), f"not ISO-8601-Z: {ts!r}"
+
+    # Round-trip through _write_variant and confirm both report.json and
+    # leads.json land with the field intact.
+    paths = mod._write_variant(
+        tmp_path,
+        client_id=config.client_id,
+        mode="stealth",
+        date_slug="2026-05-10",
+        is_full=False,
+        payload=payload,
+        csv_rows=csv_rows,
+        kingmakers_payload=kings_payload,
+    )
+    report = json.loads(paths["report.json"].read_text())
+    leads = json.loads(paths["leads.json"].read_text())
+    assert report["meta"]["generated_at_utc"] == ts
+    assert leads["_meta"]["generated_at_utc"] == ts
+
+
+def test_build_outreach_plan_meta_schema_version_stable(db_conn):
+    """schema_version stays at 1 — bumping this is a downstream-breaking change."""
+    mod = _load_build_outreach_plan_module()
+    config = _minimal_client_config()
+    payload, _csv_rows, _kings_payload = mod._generate_run(
+        db_conn,
+        config=config,
+        mode="stealth",
+        top_k=10,
+        include_orgs=False,
+        include_celebs=False,
+        kings=[],
+        co_follow_matrix=CoFollowMatrix(rows=[], cols=[], follows_by_row=[]),
+        clusters=[],
+    )
+    assert payload["meta"]["schema_version"] == 1

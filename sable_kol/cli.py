@@ -899,5 +899,132 @@ def jobs_run(job_type: str, max_jobs: int, as_json: bool) -> None:
         )
 
 
+# ---------------------------------------------------------------------------
+# Persona manifest (KO-3) — emit the canonical operator-persona slug list
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="persona-manifest")
+@click.option(
+    "--json",
+    "as_json",
+    is_flag=True,
+    help="Emit the manifest as JSON (used by SableWeb's CI persona-mirror "
+         "lockstep test fixture).",
+)
+def persona_manifest_cmd(as_json: bool) -> None:
+    """Print the operator-persona manifest from sable_kol.persona_priming.
+
+    The JSON output is the source of truth for SableWeb's TS persona union;
+    CI regenerates the fixture at ``tests/fixtures/persona_manifest.json``
+    in SableWeb pre-test so a drift fails the lockstep assertion.
+    """
+    import json as _json
+
+    from sable_kol.persona_priming import manifest
+
+    payload = manifest()
+    if as_json:
+        click.echo(_json.dumps(payload, indent=2))
+        return
+    click.echo(f"slugs:             {', '.join(payload['slugs'])}")
+    placeholders = payload["placeholder_slugs"]
+    click.echo(
+        f"placeholder slugs: {', '.join(placeholders) if placeholders else '(none)'}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Draft cold intro (KO-3) — operator-flavored opener via Grok
+# ---------------------------------------------------------------------------
+
+
+@cli.command(name="draft-intro")
+@click.argument("handle")
+@click.option(
+    "--persona",
+    type=click.Choice(["sieggy", "sparta", "arf", "ben"]),
+    required=True,
+    help="Operator persona whose voice the draft should match.",
+)
+@click.option(
+    "--project-context",
+    default="",
+    help="One-line project context the operator is reaching out about. "
+         "Optional but recommended.",
+)
+@click.option(
+    "--display-name", default=None, help="Candidate display name (optional).",
+)
+@click.option(
+    "--bio",
+    "bio_snapshot",
+    default=None,
+    help="Candidate bio snapshot, ≤400 chars (optional).",
+)
+@click.option(
+    "--archetype", default=None, help="Bank archetype tag (optional).",
+)
+@click.option(
+    "--sector-tag",
+    "sector_tags",
+    multiple=True,
+    help="Sector tag — repeatable.",
+)
+@click.option(
+    "--top-signal",
+    "top_signals",
+    multiple=True,
+    help="One bank signal line — repeatable, max 5.",
+)
+@click.option(
+    "--cluster-label", default=None, help="Cluster label from follow-graph (optional).",
+)
+@click.option(
+    "--tier", default=None, help="Outreach plan tier (A/B/C/unranked, optional).",
+)
+def draft_intro_cmd(
+    handle: str,
+    persona: str,
+    project_context: str,
+    display_name: str | None,
+    bio_snapshot: str | None,
+    archetype: str | None,
+    sector_tags: tuple[str, ...],
+    top_signals: tuple[str, ...],
+    cluster_label: str | None,
+    tier: str | None,
+) -> None:
+    """Draft a cold-intro opener for HANDLE in PERSONA's voice via Grok.
+
+    Standalone — no DB lookup, no leads.json resolution. The operator is
+    expected to pass the bank signal explicitly. The SableWeb route does
+    the leads.json → CandidateIntroSignal assembly automatically; this
+    CLI is for prompt iteration / manual smell-tests.
+    """
+    import json as _json
+
+    from sable_kol.grok_api import draft_cold_intro
+    from sable_kol.preflight_schemas import CandidateIntroSignal
+
+    signal = CandidateIntroSignal(
+        handle=handle.lstrip("@").lower().strip(),
+        display_name=display_name,
+        bio_snapshot=bio_snapshot,
+        archetype=archetype,
+        sector_tags=list(sector_tags),
+        top_signals=list(top_signals)[:5],
+        cluster_label=cluster_label,
+        tier=tier,
+    )
+    draft = draft_cold_intro(
+        handle=handle,
+        persona=persona,  # type: ignore[arg-type]
+        project_context=project_context,
+        candidate_signal=signal,
+    )
+    click.echo(_json.dumps(draft.model_dump(), indent=2))
+
+
 if __name__ == "__main__":
     cli()

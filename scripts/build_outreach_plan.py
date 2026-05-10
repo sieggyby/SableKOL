@@ -39,7 +39,7 @@ import csv
 import json
 import os
 import re
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 from sable_kol.client_config import ClientConfig, load_client_config, outreach_output_dir
@@ -454,6 +454,10 @@ def _generate_run(
             "x": {"label": config.network_axes.x.label},
             "y": {"label": config.network_axes.y.label},
         },
+        # ISO-8601-Z timestamp marking when this payload was assembled.
+        # Consumed by SableWeb's /draft-intro route as input-freshness;
+        # rendered separately from per-call signal_metadata in the UI.
+        "generated_at_utc": datetime.now(UTC).isoformat().replace("+00:00", "Z"),
     }
 
     kingmakers_payload = [

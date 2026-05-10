@@ -147,3 +147,22 @@ SableKOL `cost_events` table — visible via `sable serve`'s cost endpoints.
   regenerate on the same client at the same second WILL race on
   `latest_*` symlink updates. Mitigate by trusting the cron schedule
   and SSH-only ad-hoc runs.
+
+## Cadence + freshness contract (KO-3)
+
+Each regenerate writes `_meta.generated_at_utc` (ISO-8601-Z) into the
+report.json and leads.json payloads. The SableWeb `/draft-intro` route
+reads this as input-freshness when assembling a per-candidate cold-intro
+context. Practical implications:
+
+* **A daily timer keeps the freshness ≤ 24h** for every enabled client.
+  If you disable a client's timer, drafts against that client will surface
+  a stale freshness line in the UI but still work.
+* **Pre-KO-3 leads files have no `_meta.generated_at_utc`.** SableWeb
+  falls back to the file's mtime and flags the response as
+  `approximate=true`. The deploy step (`SIDECAR.md` § "Forced regenerate")
+  loops over every known client to backfill canonical timestamps; do this
+  once per deploy that bumps SableKOL.
+* **Manual ad-hoc regenerates are fine** — the timestamp is rewritten on
+  every run, so an operator-triggered run at 14:00 UTC will land canonical
+  freshness for the rest of the day.

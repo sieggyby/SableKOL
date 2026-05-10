@@ -164,3 +164,68 @@ cd /Users/sieggy/Projects/SableKOL
 Expects a JSON dump that includes `axis_candidates` from the fixed library
 and 8-10 `comparable_projects`. Run before each prod cut to catch xAI breakage
 early.
+
+---
+
+## /draft-intro (KO-3) — per-candidate cold-intro drafter
+
+`POST /draft-intro` returns a 2-3 line operator-flavored opener for a single
+candidate. Token-gated like the other endpoints; fails 422 on invalid persona
+or unwhitelisted `candidate_signal` fields, 409 on the `ben` placeholder, 502
+on xAI failure.
+
+| Endpoint | Status | Detail |
+|---|---|---|
+| 200 | success | `{intro_text, suggested_angle, signal_metadata}` |
+| 403 | bad token | shared token mismatch |
+| 409 | persona placeholder | currently only `ben` |
+| 422 | bad request | invalid persona, unwhitelisted candidate_signal key, or oversized free-text |
+| 502 | xAI failure | unparseable Grok response or upstream 5xx after retry |
+| 503 | xAI auth failure | `XAI_API_KEY` rejected |
+
+The audit ledger and per-operator quota live entirely on SableWeb's side at
+`/api/ops/kol-network/[clientId]/draft-intro`; the sidecar has no quota or
+audit logic. **Drafts are NOT persisted server-side** — the response is
+ephemeral and the operator copy-pastes the text.
+
+Cost ceiling: ~$0.005-0.01/call expected, 50 attempts/operator/24h cap →
+~$0.50/operator/day, ~$2.00/day worst-case across the four KOL allowlist
+operators (siegby, george, arf, ben).
+
+Manual smoke from the host venv:
+
+```bash
+cd /Users/sieggy/Projects/SableKOL
+.venv/bin/sable-kol draft-intro alice \
+    --persona sieggy \
+    --project-context "TIG: DeAI bounty IP on Base" \
+    --bio "convex optimization, occasional crypto curiosity" \
+    --archetype researcher \
+    --top-signal "tier B" --top-signal "cluster: research-academic" \
+    --tier B
+```
+
+`sable-kol persona-manifest --json` emits the canonical operator-persona
+slug list — SableWeb's `tests/fixtures/persona_manifest.json` is regenerated
+from this in CI to keep the TS persona union in lockstep.
+
+---
+
+## Forced regenerate (KO-3 Phase 4)
+
+The `_meta.generated_at_utc` timestamp added at
+`scripts/build_outreach_plan.py:443` is only present on outreach plans
+generated post-deploy. The `/draft-intro` SableWeb route falls back to file
+mtime for older files (flagged `approximate=true` on the response), but a
+forced regenerate ensures every prod client lands a canonical timestamp:
+
+```bash
+# On the prod box, after pulling the KO-3 commit:
+for client in $(ls /opt/sable/clients | sed 's/\.yaml$//'); do
+  cd /opt/sable/SableKOL && \
+    .venv/bin/sable-kol regenerate "$client"
+done
+```
+
+Run once per deploy. A subsequent draft-intro request against any client
+should return `input_freshness.approximate=false`.
