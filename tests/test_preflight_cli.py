@@ -52,8 +52,9 @@ def test_preflight_default_calls_bundled(monkeypatch):
     """Default invocation calls build_preflight_response and prints the JSON."""
     captured = {}
 
-    def fake_build(handle):
+    def fake_build(handle, **kwargs):
         captured["handle"] = handle
+        captured["kwargs"] = kwargs
         return _fake_preflight()
 
     monkeypatch.setattr("sable_kol.grok_api.build_preflight_response", fake_build)
@@ -124,3 +125,109 @@ def test_preflight_themes_override(monkeypatch):
     payload = json.loads(result.output)
     assert payload["themes_override"] == ["fashion", "rwa", "streetwear"]
     assert len(payload["comparable_projects"]) == 1
+
+
+def test_preflight_default_passes_no_context_flags(monkeypatch):
+    """Default invocation passes None/[]/False for the operator-priming flags."""
+    captured = {}
+
+    def fake_build(handle, **kwargs):
+        captured.update(kwargs)
+        return _fake_preflight()
+
+    monkeypatch.setattr("sable_kol.grok_api.build_preflight_response", fake_build)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preflight", "solstitch"])
+    assert result.exit_code == 0, result.output
+    assert captured.get("context") is None
+    assert captured.get("exclude_handles") is None
+    assert captured.get("allow_non_crypto_research") is False
+
+
+def test_preflight_context_flag_passes_through(monkeypatch):
+    """--context reaches build_preflight_response as the `context` kwarg."""
+    captured = {}
+
+    def fake_build(handle, **kwargs):
+        captured.update(kwargs)
+        return _fake_preflight()
+
+    monkeypatch.setattr("sable_kol.grok_api.build_preflight_response", fake_build)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["preflight", "--context", "TIG is a DeSci-adjacent algorithmic-bounty community", "tigfoundation"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["context"] == "TIG is a DeSci-adjacent algorithmic-bounty community"
+
+
+def test_preflight_exclude_handles_parses_csv(monkeypatch):
+    """--exclude-handles splits comma-separated input into a list of handles."""
+    captured = {}
+
+    def fake_build(handle, **kwargs):
+        captured.update(kwargs)
+        return _fake_preflight()
+
+    monkeypatch.setattr("sable_kol.grok_api.build_preflight_response", fake_build)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli, ["preflight", "--exclude-handles", "solstitch, multisynq , tigfoundation", "anyhandle"],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured["exclude_handles"] == ["solstitch", "multisynq", "tigfoundation"]
+
+
+def test_preflight_allow_research_flag(monkeypatch):
+    """--allow-research toggles allow_non_crypto_research=True."""
+    captured = {}
+
+    def fake_build(handle, **kwargs):
+        captured.update(kwargs)
+        return _fake_preflight()
+
+    monkeypatch.setattr("sable_kol.grok_api.build_preflight_response", fake_build)
+
+    runner = CliRunner()
+    result = runner.invoke(cli, ["preflight", "--allow-research", "tigfoundation"])
+    assert result.exit_code == 0, result.output
+    assert captured["allow_non_crypto_research"] is True
+
+
+def test_preflight_context_flags_reach_themes_override_path(monkeypatch):
+    """Operator-overridden themes path also forwards context flags to suggest_comparable_projects."""
+    captured_enrich = {}
+    captured_suggest = {}
+
+    def fake_enrich(handle, **kwargs):
+        captured_enrich.update(kwargs)
+        return _fake_enriched()
+
+    def fake_suggest(handle, themes, **kwargs):
+        captured_suggest.update(kwargs)
+        return [ComparableProject(handle="metafactory", rationale="rwa", shared_themes=[])]
+
+    monkeypatch.setattr("sable_kol.grok_api.enrich_handle", fake_enrich)
+    monkeypatch.setattr("sable_kol.grok_api.suggest_comparable_projects", fake_suggest)
+
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        [
+            "preflight",
+            "--themes", "math, optimization",
+            "--context", "TIG is a DeSci community",
+            "--exclude-handles", "solstitch",
+            "--allow-research",
+            "tigfoundation",
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    assert captured_enrich["context"] == "TIG is a DeSci community"
+    assert captured_suggest["context"] == "TIG is a DeSci community"
+    assert captured_suggest["exclude_handles"] == ["solstitch"]
+    assert captured_suggest["allow_non_crypto_research"] is True

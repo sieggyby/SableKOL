@@ -267,3 +267,107 @@ def test_build_preflight_response_signal_metadata(monkeypatch):
     assert result.signal_metadata.signal_type == "interpretive"
     assert result.signal_metadata.model == grok_api.GROK_MODEL
     assert result.signal_metadata.fetched_at_utc.endswith("Z")
+
+
+# ---------------------------------------------------------------------------
+# Operator-priming surface (context / exclude_handles / allow_research)
+# ---------------------------------------------------------------------------
+
+
+def test_fixed_axis_library_includes_research_axes():
+    """Research-leaning clients (TIG-style) need non-fashion/web3 axes available."""
+    for axis in [
+        "research-academic",
+        "ai-ml",
+        "desci-science",
+        "algorithmic-quant",
+        "e-acc-frontier",
+    ]:
+        assert axis in grok_api.FIXED_AXIS_LIBRARY
+
+
+def test_enrich_prompt_omits_context_block_by_default():
+    prompt = grok_api._build_enrich_prompt("solstitch")
+    assert "CONTEXT" not in prompt
+
+
+def test_enrich_prompt_injects_context_when_provided():
+    prompt = grok_api._build_enrich_prompt(
+        "tigfoundation",
+        context="TIG is a DeSci-adjacent algorithmic-bounty community",
+    )
+    assert "CONTEXT" in prompt
+    assert "TIG is a DeSci-adjacent algorithmic-bounty community" in prompt
+
+
+def test_comparable_prompt_default_keeps_consumer_brand_ban():
+    prompt = grok_api._build_comparable_prompt("solstitch", ["fashion"])
+    assert "non-crypto consumer brands" in prompt
+    assert "**unless**" not in prompt
+    assert "operator-managed conflicts" not in prompt
+
+
+def test_comparable_prompt_allow_research_relaxes_brand_ban():
+    prompt = grok_api._build_comparable_prompt(
+        "tigfoundation", ["math"], allow_non_crypto_research=True,
+    )
+    assert "**unless**" in prompt
+    assert "research lab" in prompt or "academic group" in prompt
+
+
+def test_comparable_prompt_excludes_normalized_handles():
+    prompt = grok_api._build_comparable_prompt(
+        "tigfoundation", ["math"],
+        exclude_handles=["@solstitch", "multisynq", "  ", "@@bad"],
+    )
+    assert "operator-managed conflicts" in prompt
+    assert "@solstitch" in prompt
+    assert "@multisynq" in prompt
+
+
+def test_comparable_prompt_omits_excludes_when_list_empty_after_strip():
+    """Whitespace-only entries should not produce an empty exclude line."""
+    prompt = grok_api._build_comparable_prompt(
+        "solstitch", ["fashion"], exclude_handles=["   ", ""],
+    )
+    assert "operator-managed conflicts" not in prompt
+
+
+def test_enrich_handle_forwards_context_to_prompt(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "x-test")
+    captured_prompts = []
+
+    def handler(req):
+        body = json.loads(req.content.decode("utf-8"))
+        captured_prompts.append(body["messages"][0]["content"])
+        return _xai_response(GOOD_ENRICH)
+
+    client = _mock_client(handler)
+    grok_api.enrich_handle("@solstitch", client=client, context="primer text")
+    assert len(captured_prompts) == 1
+    assert "primer text" in captured_prompts[0]
+
+
+def test_suggest_comparable_forwards_all_priming_flags(monkeypatch):
+    monkeypatch.setenv("XAI_API_KEY", "x-test")
+    captured_prompts = []
+
+    def handler(req):
+        body = json.loads(req.content.decode("utf-8"))
+        captured_prompts.append(body["messages"][0]["content"])
+        return _xai_response(GOOD_COMPARABLES)
+
+    client = _mock_client(handler)
+    grok_api.suggest_comparable_projects(
+        "@tigfoundation",
+        ["math"],
+        client=client,
+        context="TIG context",
+        exclude_handles=["solstitch"],
+        allow_non_crypto_research=True,
+    )
+    prompt = captured_prompts[0]
+    assert "TIG context" in prompt
+    assert "@solstitch" in prompt
+    assert "operator-managed conflicts" in prompt
+    assert "**unless**" in prompt

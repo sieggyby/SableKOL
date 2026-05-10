@@ -71,6 +71,20 @@ FIXED_AXIS_LIBRARY = [
     "consumer-mainstream",
     "on-chain",
     "defi-native",
+    # Research / AI / DeSci axes — added so research-leaning clients (e.g. TIG)
+    # don't get force-fit into the original fashion/web3-biased library.
+    "research-academic",
+    "ai-ml",
+    "desci-science",
+    "algorithmic-quant",
+    "e-acc-frontier",
+    # DeAI / bounty-IP axes — added 2026-05-09 from Grok meta-audit on TIG.
+    # `deai-frontier` captures the explicit Decentralized-AI positioning that
+    # `e-acc-frontier` and `ai-ml` don't separate cleanly. `bounty-ip-commercialization`
+    # captures the unique TIG flywheel (PoW submissions → community-voted IP →
+    # licensable patents → revenue) that no other axis covers.
+    "deai-frontier",
+    "bounty-ip-commercialization",
 ]
 
 
@@ -103,9 +117,13 @@ def _normalize(handle: str) -> str:
     return h
 
 
-def _build_enrich_prompt(handle: str) -> str:
+def _build_enrich_prompt(handle: str, context: str | None = None) -> str:
     axis_list = ", ".join(FIXED_AXIS_LIBRARY)
-    return f"""You have live read access to X (Twitter). Look up @{handle} on X right now and return a JSON object describing the account. This will pre-fill a KOL outreach wizard, so be accurate and concise.
+    context_block = (
+        f"\nCONTEXT (operator-supplied — use to disambiguate when the public bio is thin):\n{context.strip()}\n"
+        if context else ""
+    )
+    return f"""You have live read access to X (Twitter). Look up @{handle} on X right now and return a JSON object describing the account. This will pre-fill a KOL outreach wizard, so be accurate and concise.{context_block}
 
 OUTPUT RULES:
 - Return ONLY a JSON object. No prose, no markdown fences.
@@ -139,9 +157,9 @@ OBJECT SHAPE:
   ]
 }}
 
-axis_candidates: 2-3 candidate (x, y) pairs from this fixed library: {axis_list}. Pick pairs that meaningfully separate this project's audience.
+axis_candidates: up to 3 candidate (x, y) pairs from this fixed library: {axis_list}. Pick pairs that meaningfully separate this project's audience. Return an empty array if no library pair fits well — do NOT force a bad fit.
 
-recent_themes: 3-5 short keyword tags describing what the account currently posts about.
+recent_themes: 3 to 5 short keyword tags describing what the account currently posts about. Use 3 only if 4+ would be redundant; otherwise prefer 4-5 for richer downstream matching.
 
 audience_archetype: who follows this account, one line. e.g. "fashion-leaning crypto natives", "DeFi quants and infrastructure devs".
 
@@ -149,16 +167,53 @@ Output the JSON object only.
 """
 
 
-def _build_comparable_prompt(handle: str, themes: list[str]) -> str:
+def _build_comparable_prompt(
+    handle: str,
+    themes: list[str],
+    *,
+    context: str | None = None,
+    exclude_handles: list[str] | None = None,
+    allow_non_crypto_research: bool = False,
+    inclusion_hint: str | None = None,
+    extra_exclusions: list[str] | None = None,
+) -> str:
     theme_str = ", ".join(themes) if themes else "(unspecified)"
-    return f"""You have live read access to X (Twitter). I'm building a KOL outreach plan for the project @{handle}. Their themes are: {theme_str}.
+    context_block = (
+        f"\nCONTEXT (operator-supplied):\n{context.strip()}\n"
+        if context else ""
+    )
+    extra_excludes = ""
+    if exclude_handles:
+        normalized = [f"@{h.lstrip('@').strip()}" for h in exclude_handles if h.strip()]
+        if normalized:
+            extra_excludes = (
+                f"\n- Do NOT suggest any of these handles "
+                f"(operator-managed conflicts): {', '.join(normalized)}."
+            )
+    if extra_exclusions:
+        for rule in extra_exclusions:
+            r = rule.strip()
+            if r:
+                extra_excludes += f"\n- {r}"
+    consumer_brand_rule = (
+        "- Do NOT suggest celebrity accounts or non-crypto consumer brands, "
+        "**unless** the account is a research lab, academic group, or AI/ML "
+        "community whose audience plausibly overlaps with this project's."
+        if allow_non_crypto_research
+        else "- Do NOT suggest celebrity accounts or non-crypto consumer brands."
+    )
+    inclusion_block = (
+        f"\nINCLUSION HINTS (operator-supplied — bias toward matches that fit these cues):\n- {inclusion_hint.strip()}\n"
+        if inclusion_hint else ""
+    )
+    return f"""You have live read access to X (Twitter). I'm building a KOL outreach plan for the project @{handle}. Their themes are: {theme_str}.{context_block}
 
-Suggest 8-10 comparable projects on X — ones whose audience overlaps meaningfully with @{handle}'s, so a follower of one would plausibly be interested in the other. Comparable means: similar themes, similar cultural register, similar audience demographics.
+Suggest 8-10 comparable projects on X — ones whose audience overlaps meaningfully with @{handle}'s, so a follower of one would plausibly be interested in the other. Comparable means: similar themes, similar cultural register, similar audience demographics. Prefer ADJACENT communities (whose thought leaders could be converted to this project's orbit) over DIRECT competitors (whose KOLs are already locked in to the rival).{inclusion_block}
 
 EXCLUSIONS:
 - Do NOT suggest large org accounts (exchanges, big media outlets, central foundations).
-- Do NOT suggest celebrity accounts or non-crypto consumer brands.
-- Do NOT suggest @{handle} itself.
+{consumer_brand_rule}
+- Do NOT suggest @{handle} itself.{extra_excludes}
 
 OUTPUT RULES:
 - Return ONLY a JSON object. No prose, no markdown fences.
@@ -291,16 +346,22 @@ def enrich_handle(
     *,
     client: httpx.Client | None = None,
     timeout: float = 90.0,
+    context: str | None = None,
 ) -> EnrichedHandle:
     """Live xAI lookup of a single X handle for the wizard preflight.
 
     Returns an :class:`EnrichedHandle`. Caller is responsible for wrapping it
     in a :class:`PreflightResponse` if the comparable-projects step also runs.
+
+    Args:
+        context: optional operator-supplied priming text (e.g. "TIG is a
+            DeSci-adjacent algorithmic-bounty community ..."). Injected into
+            the prompt so Grok can disambiguate when the public bio is thin.
     """
     h = _normalize(handle)
     api_key = _resolve_api_key()
     raw = _post_chat(
-        prompt=_build_enrich_prompt(h),
+        prompt=_build_enrich_prompt(h, context=context),
         client=client,
         api_key=api_key,
         timeout=timeout,
@@ -318,12 +379,39 @@ def suggest_comparable_projects(
     *,
     client: httpx.Client | None = None,
     timeout: float = 90.0,
+    context: str | None = None,
+    exclude_handles: list[str] | None = None,
+    allow_non_crypto_research: bool = False,
+    inclusion_hint: str | None = None,
+    extra_exclusions: list[str] | None = None,
 ) -> list[ComparableProject]:
-    """Live xAI suggestion of similar-audience projects on X."""
+    """Live xAI suggestion of similar-audience projects on X.
+
+    Args:
+        context: optional operator-supplied priming text injected into the prompt.
+        exclude_handles: handles Grok should not suggest (e.g. other Sable
+            clients to avoid pool conflicts).
+        allow_non_crypto_research: relax the "non-crypto consumer brands"
+            exclusion for research labs / AI-ML / academic accounts. Useful
+            for DeSci/AI-adjacent clients like TIG.
+        inclusion_hint: operator-supplied positive bias for matches (e.g.
+            "prefer accounts that have referenced AlphaEvolve-style algorithmic
+            wins"). Renders as an INCLUSION HINTS block in the prompt.
+        extra_exclusions: additional category-level exclusion rules (e.g.
+            "Closed-source corporate AI accounts without an open-research angle").
+            Each string becomes its own bullet under EXCLUSIONS.
+    """
     h = _normalize(handle)
     api_key = _resolve_api_key()
     raw = _post_chat(
-        prompt=_build_comparable_prompt(h, themes),
+        prompt=_build_comparable_prompt(
+            h, themes,
+            context=context,
+            exclude_handles=exclude_handles,
+            allow_non_crypto_research=allow_non_crypto_research,
+            inclusion_hint=inclusion_hint,
+            extra_exclusions=extra_exclusions,
+        ),
         client=client,
         api_key=api_key,
         timeout=timeout,
@@ -353,6 +441,11 @@ def build_preflight_response(
     client: httpx.Client | None = None,
     enrich_timeout: float = 90.0,
     comparable_timeout: float = 90.0,
+    context: str | None = None,
+    exclude_handles: list[str] | None = None,
+    allow_non_crypto_research: bool = False,
+    inclusion_hint: str | None = None,
+    extra_exclusions: list[str] | None = None,
 ) -> PreflightResponse:
     """Convenience wrapper used by the FastAPI sidecar's /preflight endpoint.
 
@@ -360,13 +453,24 @@ def build_preflight_response(
     the freshly-derived themes so the operator gets a coherent first pass)
     and returns a single :class:`PreflightResponse` with one shared
     :class:`SignalMetadata` block.
+
+    See ``enrich_handle`` and ``suggest_comparable_projects`` for the
+    optional context / exclude_handles / allow_non_crypto_research /
+    inclusion_hint / extra_exclusions semantics.
     """
-    enriched = enrich_handle(handle, client=client, timeout=enrich_timeout)
+    enriched = enrich_handle(
+        handle, client=client, timeout=enrich_timeout, context=context,
+    )
     comparables = suggest_comparable_projects(
         handle,
         enriched.recent_themes,
         client=client,
         timeout=comparable_timeout,
+        context=context,
+        exclude_handles=exclude_handles,
+        allow_non_crypto_research=allow_non_crypto_research,
+        inclusion_hint=inclusion_hint,
+        extra_exclusions=extra_exclusions,
     )
     return PreflightResponse(
         **enriched.model_dump(),

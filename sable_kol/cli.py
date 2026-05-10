@@ -597,10 +597,55 @@ def follow_graph_analyze(
     help="Override the themes used for suggest_comparable_projects "
          "(comma-separated). Default: themes derived from enrich_handle.",
 )
+@click.option(
+    "--context",
+    default=None,
+    help="Operator-supplied priming text injected into both prompts. Use to "
+         "disambiguate when the public bio is thin or the project's positioning "
+         "differs from its surface presence. Example: 'TIG is a DeSci-adjacent "
+         "algorithmic-bounty community on Solana with a Karpathy-heavy cultural orbit.'",
+)
+@click.option(
+    "--exclude-handles",
+    "exclude_handles",
+    default=None,
+    help="Comma-separated handles Grok must not suggest as comparables. "
+         "Use to keep other Sable-managed clients out of the pool.",
+)
+@click.option(
+    "--allow-research",
+    is_flag=True,
+    help="Relax the 'non-crypto consumer brands' exclusion to allow research "
+         "labs / AI-ML / academic accounts. Set for DeSci/AI-adjacent clients "
+         "(TIG, etc.).",
+)
+@click.option(
+    "--inclusion-hint",
+    "inclusion_hint",
+    default=None,
+    help="Positive bias to apply to comparable-project suggestions. Example: "
+         "'prefer accounts that have referenced AlphaEvolve-style algorithmic "
+         "wins or PoW/benchmark bounty mechanics for open innovation'. Renders "
+         "as an INCLUSION HINTS block alongside the existing EXCLUSIONS.",
+)
+@click.option(
+    "--extra-exclusion",
+    "extra_exclusions",
+    multiple=True,
+    help="Additional category-level exclusion rules. Each --extra-exclusion "
+         "becomes its own bullet under EXCLUSIONS. Repeat for multiple rules. "
+         "Example: --extra-exclusion 'Closed-source corporate AI accounts "
+         "without an open-research angle'.",
+)
 def preflight_cmd(
     handle: str,
     enrich_only: bool,
     themes: str | None,
+    context: str | None,
+    exclude_handles: str | None,
+    allow_research: bool,
+    inclusion_hint: str | None,
+    extra_exclusions: tuple[str, ...],
 ) -> None:
     """Print what the any-project wizard would pre-fill for HANDLE.
 
@@ -616,16 +661,29 @@ def preflight_cmd(
         suggest_comparable_projects,
     )
 
+    exclude_list = (
+        [h.strip() for h in exclude_handles.split(",") if h.strip()]
+        if exclude_handles else None
+    )
+    extra_excl_list = list(extra_exclusions) if extra_exclusions else None
+
     if enrich_only:
-        enriched = enrich_handle(handle)
+        enriched = enrich_handle(handle, context=context)
         click.echo(_json.dumps(enriched.model_dump(), indent=2))
         return
 
     if themes is not None:
         # Operator-overridden themes path: split, call enrich + suggest separately.
         theme_list = [t.strip() for t in themes.split(",") if t.strip()]
-        enriched = enrich_handle(handle)
-        comparables = suggest_comparable_projects(handle, theme_list)
+        enriched = enrich_handle(handle, context=context)
+        comparables = suggest_comparable_projects(
+            handle, theme_list,
+            context=context,
+            exclude_handles=exclude_list,
+            allow_non_crypto_research=allow_research,
+            inclusion_hint=inclusion_hint,
+            extra_exclusions=extra_excl_list,
+        )
         payload = {
             **enriched.model_dump(),
             "comparable_projects": [c.model_dump() for c in comparables],
@@ -634,7 +692,14 @@ def preflight_cmd(
         click.echo(_json.dumps(payload, indent=2))
         return
 
-    response = build_preflight_response(handle)
+    response = build_preflight_response(
+        handle,
+        context=context,
+        exclude_handles=exclude_list,
+        allow_non_crypto_research=allow_research,
+        inclusion_hint=inclusion_hint,
+        extra_exclusions=extra_excl_list,
+    )
     click.echo(_json.dumps(response.model_dump(), indent=2))
 
 
