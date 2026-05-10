@@ -5,39 +5,76 @@
 **For shipped work**, see [`docs/AUDIT_LOG.md`](docs/AUDIT_LOG.md).
 **For design rationale of the any-project wizard**, see [`docs/any_project_wizard_plan.md`](docs/any_project_wizard_plan.md).
 
-**Last updated:** 2026-05-09 — wizard live in prod, post-launch tactical fixes shipped (model bump, timeouts, cost rebase, datetime portability). See audit log for the full picture.
+**Last updated:** 2026-05-09 — wizard live in prod; KO-1 (preflight context flags) shipped in `6551693`, KO-2 (KOLNetwork zoom + pan) shipped in SableWeb `af8dbbe`. See audit log for the full picture of what's live.
 
 ---
 
 ## Open
 
-### KO-1 — Commit SableKOL preflight context flags
+### KO-1.b — Sidecar passthrough for preflight context flags
 
-Local-only changes to `sable_kol/{cli.py,grok_api.py}`:
-- `--context` / `--exclude-handles` / `--allow-research` flags on `sable-kol preflight` for non-fashion/web3 clients (TIG-style DeSci/AI projects)
-- 5 new axes added to `FIXED_AXIS_LIBRARY`: `research-academic`, `ai-ml`, `desci-science`, `algorithmic-quant`, `e-acc-frontier`
-- Was useful in this session for handling research-leaning preflight runs; should ship before next operator-driven preflight.
+Code shipped in `6551693`: `enrich_handle` / `suggest_comparable_projects` / `build_preflight_response` all accept `context` / `exclude_handles` / `allow_non_crypto_research` kwargs. CLI exposes them as `--context` / `--exclude-handles` / `--allow-research`. **The sidecar service (`preflight_service.py`) does NOT yet plumb them through**, so the wizard UI can't reach them.
 
-**Acceptance:** new flags surface in `sable-kol preflight --help`; new axes available to wizard Step 2; tests updated to cover the new keyword args path through `enrich_handle` / `suggest_comparable_projects` / `build_preflight_response`. (`tests/test_preflight_cli.py` is already partially updated to accept `**kwargs` — finish the surface-area coverage before commit.) Sidecar service surface needs the same flag passthrough so the wizard UI can reach them — will require a Phase B follow-up commit (preflight_service.py + Zod schema + wizard step).
+**Acceptance:**
+- `preflight_service.py` `/preflight` and `/suggest-comparable` request models (Pydantic) gain `context: str | None = None`, `exclude_handles: list[str] | None = None`, `allow_non_crypto_research: bool = False`.
+- Endpoint forwards them into `build_preflight_response` / `suggest_comparable_projects`.
+- SableWeb `src/lib/kol-create-schemas.ts` Zod schemas mirror the new optional fields.
+- SableWeb wizard Step 1 ("Identify") gains a small "Project context" textarea + an "Allow research/AI peers" checkbox; advanced collapsed area for `exclude_handles`.
+- Tests in `tests/test_preflight_service.py` cover the three new fields end-to-end.
 
-### KO-2 — Commit SableWeb KOL bits
+Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we can bundle.
 
-Local-only in SableWeb (held out of Phase A intentionally — this is the cleanup):
-- `src/components/ops/KOLNetwork.tsx` — zoom + pan + `hideUnscored` default-on toggle (already deployed via rsync 2026-05-07, not yet committed)
-- `src/lib/allowlist.ts` — client allowlist swap: `client@psy.xyz` → `client@solstitch.xyz`
-- `tests/kol-create-allowlist.test.ts` — matching test fixture (negative-case email)
+### KO-3 — Per-candidate Grok enrichment button
 
-**Note:** SableWeb working tree also has unrelated work (intake form, multisynq proof, synq pages, db.ts eslint cleanup, checkpoint-reader doc fix, plus the same `psy_protocol` → `multisynq`/`solstitch` substitution across 7 test files + TODO.md). Those are not KOL-intersection concerns; commit them in their own non-KOL commit.
+**Memory:** `project_sablekol_grok_enrichment.md`.
 
-### KO-3 — Per-candidate Grok enrichment button (planned)
+**Why:** today's outreach motion still routes through CSV exports + manual cold-intro authoring. The bank has rich per-candidate signal (sources, archetype, sector, axis scores, cluster) but operators don't see it as a usable cue when writing intros — they see it as a data point. A persona-conditioned Grok call closes that loop: the operator clicks "Draft intro" on a candidate row and gets a 2-3 line opener that already references concrete signal from the bank, in the operator's voice register.
 
-Memory: `project_sablekol_grok_enrichment.md`.
+**User flow:**
+1. Operator on `/ops/kol-network/<slug>` (SableWeb).
+2. Clicks a candidate node → drawer opens (existing UI, KO-2 shipped).
+3. New button: "Draft cold-intro (Grok)". Adjacent persona dropdown defaults to the logged-in operator (Sieggy / Sparta / Arf).
+4. Click → spinner → Grok returns. Drawer renders the result with a freshness timestamp + `signal_metadata` chip (per AGENTS interpretive-signal taxonomy), a copy-to-clipboard button, and a "regenerate" link.
+5. Output is NOT auto-sent anywhere. This is operator-assist, not auto-outreach.
 
-Operator-facing button on `/ops/kol-network/<slug>` candidate detail. Generates a 2-3 line cold-intro note for the selected candidate, conditioned on operator persona (Arf / Sparta / Sieggy). Reuses the existing sidecar — new endpoint `/enrich-candidate` taking `{handle, persona, project_context}` → Grok prompt → returns `{intro_note, suggested_angle, freshness_metadata}`.
+**Architecture (mirrors the existing wizard sidecar pattern — no new infra):**
+- `sable_kol/grok_api.py` — new `draft_cold_intro(handle, persona, project_context, candidate_signal) -> ColdIntroDraft`. Pydantic-validated. Same retry/backoff lineage as `enrich_handle`.
+- `sable_kol/preflight_schemas.py` — new `ColdIntroDraft` (intro_text, suggested_angle, signal_metadata) + `ColdIntroRequest`.
+- `sable_kol/preflight_service.py` — new `POST /draft-intro` endpoint, gated by the same `secrets.compare_digest` token, taking `{handle, persona, project_slug, candidate_id?}`. Persona is one of `sieggy | sparta | arf` (extensible via `PERSONAS` constant); each persona has a small priming block (voice register, opening style, what they avoid).
+- `sable_kol/persona_priming.py` (new) — the persona priming blocks. Three profiles initially. Plain Python dict keyed by persona slug; no DB table needed at v1.
+- SableWeb `src/app/api/ops/kol-network/draft-intro/route.ts` — proxies to sidecar with Zod validation, gated by `withWizardGate()` (same allowlist + audit pattern as the wizard create routes), submitter-or-admin rule.
+- SableWeb `src/components/ops/KOLCandidateDrawer.tsx` — adds the button + persona dropdown + result panel. Lives next to the existing relationship-tagging UI.
+- SableWeb `src/lib/kol-create-schemas.ts` — `ColdIntroDraftSchema` Zod mirror.
 
-**Test cohort:** SolStitch top-100 (already curated).
+**Cost guardrails:**
+- Hit Grok once per click. No streaming; complete-or-fail.
+- Daily quota: 50 drafts/operator/24h, counted from `kol_create_audit` outcome='draft_intro_allowed' rows. Reuses the existing audit table — add a new outcome value, no migration.
+- Per-call cost: ~$0.002 xAI (operator-tier model = grok-4-latest). Daily ceiling per operator: ~$0.10. Same envelope as the wizard preflight.
 
-**Defer until:** outreach status tracking lands or operator demand surfaces. Currently no active outreach motion needs this.
+**Test cohort:** SolStitch top-100 (already curated). Validate that drafts:
+- reference at least one concrete signal from the bank (not generic).
+- match the persona register (terse Sieggy vs. warmer Sparta vs. technical Arf).
+- carry the `signal_metadata` block + freshness timestamp.
+
+**Acceptance gates:**
+- 6+ tests in `tests/test_grok_api.py` covering happy path + 3 personas + missing-signal fallback + xAI 503 retry.
+- 4+ tests in `tests/test_preflight_service.py` covering token gate + happy path + invalid persona + audit row written.
+- 3+ tests in SableWeb `tests/api-kol-draft-intro.test.ts` covering anonymous→401, non-allowlisted→403, allowed→200 with audit row.
+- Manual: 5 SolStitch top-100 candidates → 5 drafts × 3 personas = 15 drafts. Smell-test the variance.
+
+**Out of scope for v1:**
+- Auto-send to X / DM. Strictly operator-assisted draft generation.
+- Multi-candidate batch drafts (loop in next iteration if useful).
+- Persona-tuning UI. Persona blocks are code-edited at v1.
+- Saving drafts to a DB. Drafts are ephemeral; copy-paste is the persistence.
+
+**Phasing (estimated ~1 day total):**
+- Phase 1 (~3h): `grok_api.draft_cold_intro` + `persona_priming.py` + tests. Land standalone CLI verb `sable-kol draft-intro` for direct verification before the sidecar wiring.
+- Phase 2 (~2h): sidecar `/draft-intro` endpoint + tests. Bundle KO-1.b sidecar passthrough into the same commit if not already shipped.
+- Phase 3 (~3h): SableWeb route + drawer button + Zod schema + tests.
+- Phase 4 (~1h): manual SolStitch top-100 smell-test, prod deploy.
+
+**Defer until:** operator says "go" or active outreach surfaces a clear bottleneck. KO-1.b is a soft prerequisite — if not done, do it as part of Phase 2 above.
 
 ### KO-4 — Bank source expansion (paid)
 
