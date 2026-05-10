@@ -24,10 +24,11 @@ def test_persona_table_matches_literal():
     assert set(PERSONAS.keys()) == set(get_args(PersonaSlug))
 
 
-def test_real_personas_are_arf_and_sparta():
-    """Sieggy was removed in KO-3 v2 (he doesn't run outreach)."""
+def test_real_personas_are_arf_sparta_alex():
+    """Sieggy was removed in KO-3 v2 (he doesn't run outreach). Alex
+    Malone (@CreateTheDots) added 2026-05-10."""
     real_slugs = sorted(s for s, p in PERSONAS.items() if not p.placeholder)
-    assert real_slugs == ["arf", "sparta"]
+    assert real_slugs == ["alex", "arf", "sparta"]
 
 
 def test_sieggy_persona_removed():
@@ -39,18 +40,19 @@ def test_sieggy_persona_removed():
 def test_ben_is_placeholder():
     assert PERSONAS["ben"].placeholder is True
     assert is_placeholder("ben") is True
-    for real in ("arf", "sparta"):
+    for real in ("arf", "sparta", "alex"):
         assert is_placeholder(real) is False
 
 
 def test_real_personas_have_minimum_priming():
-    """sieggy / sparta have load-bearing fields populated.
+    """Real personas have load-bearing fields populated.
 
     Empty profiles would cause Grok to fabricate commonality from thin
     air. We require at minimum: non-empty bio, ≥1 theme, ≥1 community,
-    non-empty voice_signature.
+    non-empty voice_signature. Profiles may be conservative stubs (Alex,
+    Sparta as of 2026-05-10) but not empty.
     """
-    for slug in ("arf", "sparta"):
+    for slug in ("arf", "sparta", "alex"):
         p = PERSONAS[slug]
         assert p.bio.strip(), f"{slug} bio empty"
         assert "<placeholder" not in p.bio, f"{slug} bio still placeholder"
@@ -65,7 +67,7 @@ def test_persona_manifest_cli_emits_expected_shape():
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload == manifest()
-    assert sorted(payload["slugs"]) == ["arf", "ben", "sparta"]
+    assert sorted(payload["slugs"]) == ["alex", "arf", "ben", "sparta"]
     assert payload["placeholder_slugs"] == ["ben"]
 
 

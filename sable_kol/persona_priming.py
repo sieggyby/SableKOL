@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from typing import Literal, get_args
 
 
-PersonaSlug = Literal["arf", "sparta", "ben"]
+PersonaSlug = Literal["arf", "sparta", "alex", "ben"]
 
 
 @dataclass(slots=True, frozen=True)
@@ -198,22 +198,61 @@ ARF = PersonaPriming(
 
 
 # --- SPARTA ---
-# TODO: Sieggy is providing real values via the grill-me round (next).
+# Verified 2026-05-10: real X handle is @0x_Asuka (Sieggy confirmed; my
+# earlier Grok-search hallucinated @0xSparta). George/Sparta is anon —
+# real_name intentionally null. The bio is grounded in known facts;
+# everything below `bio` is conservative stub until Sieggy grills him out.
 SPARTA = PersonaPriming(
-    display_name="sparta",
-    twitter_handle="",  # TBD
+    display_name="Sparta",
+    twitter_handle="0x_Asuka",
     real_name=None,
-    location="<TBD>",
-    bio="Sable operator. Founder-to-founder communicator. <TBD: fill in via PR>",
-    themes=["crypto founder discourse", "ops"],
+    location="",
+    bio=(
+        "Co-runs ARKN and Sable. Pseudonymous online as 'Asuka'; known "
+        "internally as 'Sparta'. Builds with Arf and Sieggy. Maintains a "
+        "TIG ARG side project at 329ga8dh4x.com — sanctioned-ish creative "
+        "experiment, not impersonation. Direct and founder-to-founder "
+        "register. <Profile fields below are stubs; refine via grill-me.>"
+    ),
+    themes=["crypto founder discourse", "ops", "TIG", "ARGs"],
     likes=["plain language"],
     dislikes=["irony posting"],
-    communities=["Sable", "ARKN"],
-    notable_mutuals=[],
+    communities=["Sable", "ARKN", "TIG"],
+    notable_mutuals=["CahitArf11", "siegby"],
     values=["business-first"],
     voice_signature=(
         "direct, plain-spoken, founder-to-founder. names the project, "
         "names the ask, references one concrete reason — in that order"
+    ),
+)
+
+
+# --- ALEX ---
+# Added 2026-05-10. Alex Malone (alex@arkn.io, @CreateTheDots). ARKN
+# co-builder + Sable operator. Grok research returned thin signal
+# (account active but limited public posting visible to live X search);
+# verified fields are grounded, the rest are conservative stubs until
+# a grill-me round fills them.
+ALEX = PersonaPriming(
+    display_name="Alex",
+    twitter_handle="CreateTheDots",
+    real_name="Alex Malone",
+    location="San Francisco, CA",
+    bio=(
+        "Alex Malone. ARKN co-builder, Sable operator. Works on tech + "
+        "creativity + community ecosystems. Email alex@arkn.io. "
+        "<Profile fields below are stubs from limited Grok research; "
+        "refine via grill-me when ready.>"
+    ),
+    themes=["tech", "agency building", "community ecosystems"],
+    likes=[],
+    dislikes=[],
+    communities=["ARKN", "Sable"],
+    notable_mutuals=["CahitArf11", "0x_Asuka", "siegby"],
+    values=[],
+    voice_signature=(
+        "<stub — refine via grill-me. Likely a thoughtful, building-focused "
+        "register; reach out to verify before relying on this for tone."
     ),
 )
 
@@ -239,6 +278,7 @@ BEN = PersonaPriming(
 PERSONAS: dict[PersonaSlug, PersonaPriming] = {
     "arf": ARF,
     "sparta": SPARTA,
+    "alex": ALEX,
     "ben": BEN,
 }
 
