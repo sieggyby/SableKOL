@@ -447,6 +447,28 @@ def suggest_comparable_projects(
         if _normalize(cp.handle) == h:
             continue
         out.append(cp)
+
+    # Code-side handle verification — Grok's self-reported handle_verified is
+    # unreliable. Empirical: 3/6 hallucinations on the first TIG run, 2/9 on
+    # the post-prompt-fix re-run, in both cases with handle_verified=true on
+    # the bad ones. Hit SocialData for ground truth and drop any that don't
+    # resolve. See feedback_grok_handle_verification.md for the receipts.
+    if out:
+        from sable_kol.handle_verifier import verify_handles
+        verdicts = verify_handles([cp.handle for cp in out])
+        verified: list[ComparableProject] = []
+        for cp in out:
+            if verdicts.get(_normalize(cp.handle), True):
+                cp.handle_verified = True  # we just verified it ourselves
+                verified.append(cp)
+            else:
+                logger.info(
+                    "dropping unverified handle @%s (Grok said handle_verified=%s, "
+                    "SocialData says it doesn't resolve)",
+                    cp.handle, cp.handle_verified,
+                )
+        out = verified
+
     return out
 
 
