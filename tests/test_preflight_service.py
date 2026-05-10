@@ -470,22 +470,30 @@ def test_suggest_comparable_forwards_priming_flags(app_client, monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# /draft-intro (KO-3) — sidecar surface
+# /enrich-candidate (KO-3 v2) — sidecar surface
 # ---------------------------------------------------------------------------
 
 
-def _fake_draft(handle: str = "alice") -> "ColdIntroDraft":
-    from sable_kol.preflight_schemas import ColdIntroDraft, SignalMetadata
+def _fake_enrichment():
+    from sable_kol.preflight_schemas import Enrichment, SignalMetadata
 
-    return ColdIntroDraft(
-        intro_text="saw your AlphaEvolve note — sharp.\nbuilding TIG, worth a 5-min sync?",
-        suggested_angle="leans on top_signals: AlphaEvolve commentary",
+    return Enrichment(
+        location="NYC",
+        bio_snapshot="convex optimization. occasional crypto curiosity.",
+        recent_themes=["alphaevolve", "compiler internals"],
+        likes=["typewriter aesthetics"],
+        dislikes=["VC-coded threads"],
+        communities=["FWB"],
+        notable_mutuals=["doreen", "punk6529"],
+        top_tweets=["the alphaevolve paper finally clicked for me"],
+        commonality_with_operator="you both follow @doreen and reference FWB cohort posting",
+        commentary="alice keeps pivoting from technical to aesthetic asides",
         signal_metadata=SignalMetadata(
             source="grok_xai_live",
             model="grok-4-latest",
             fetched_at_utc="2026-05-10T15:00:00Z",
             signal_type="interpretive",
-            caveat="ai-drafted",
+            caveat="intel via grok",
         ),
     )
 
@@ -494,112 +502,109 @@ def _fake_draft(handle: str = "alice") -> "ColdIntroDraft":
     (None, 403),
     ("wrong", 403),
 ])
-def test_draft_intro_token_gate(monkeypatch, token, expected):
+def test_enrich_token_gate(monkeypatch, token, expected):
     monkeypatch.setenv("SABLE_SERVICE_TOKEN", TEST_TOKEN)
     from sable_kol.preflight_service import app
     client = TestClient(app)
     headers = {} if token is None else {"X-Sable-Service-Token": token}
     r = client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
-            "persona": "sieggy",
+            "persona": "arf",
             "project_context": "",
-            "candidate_signal": {"handle": "alice"},
+            "bank_signal": {"handle": "alice"},
         },
         headers=headers,
     )
     assert r.status_code == expected
 
 
-def test_draft_intro_unconfigured_token_503(monkeypatch):
+def test_enrich_unconfigured_token_503(monkeypatch):
     monkeypatch.delenv("SABLE_SERVICE_TOKEN", raising=False)
     from sable_kol.preflight_service import app
     client = TestClient(app)
     r = client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
-            "persona": "sieggy",
+            "persona": "arf",
             "project_context": "",
-            "candidate_signal": {"handle": "alice"},
+            "bank_signal": {"handle": "alice"},
         },
         headers={"X-Sable-Service-Token": "anything"},
     )
     assert r.status_code == 503
 
 
-def test_draft_intro_happy(app_client, monkeypatch):
+def test_enrich_happy(app_client, monkeypatch):
     captured = {}
 
-    def fake_draft(*, handle, persona, project_context, candidate_signal):
+    def fake_enrich(*, handle, persona, project_context, bank_signal):
         captured["handle"] = handle
         captured["persona"] = persona
         captured["project_context"] = project_context
-        captured["candidate_signal"] = candidate_signal
-        return _fake_draft(handle)
+        captured["bank_signal"] = bank_signal
+        return _fake_enrichment()
 
     monkeypatch.setattr(
-        "sable_kol.preflight_service.draft_cold_intro", fake_draft
+        "sable_kol.preflight_service.enrich_candidate", fake_enrich
     )
     r = app_client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
-            "persona": "sparta",
-            "project_context": "TIG outreach",
-            "candidate_signal": {
+            "persona": "arf",
+            "project_context": "SolStitch outreach",
+            "bank_signal": {
                 "handle": "alice",
                 "bio_snapshot": "convex optimization",
-                "top_signals": ["AlphaEvolve commentary"],
                 "tier": "B",
+                "social_proximity_brokers": ["doreen", "punk6529"],
             },
         },
         headers={"X-Sable-Service-Token": TEST_TOKEN},
     )
     assert r.status_code == 200
     body = r.json()
-    assert "intro_text" in body
+    assert body["location"] == "NYC"
+    assert "alphaevolve" in body["recent_themes"]
     assert body["signal_metadata"]["source"] == "grok_xai_live"
-    assert captured["persona"] == "sparta"
-    assert captured["candidate_signal"].handle == "alice"
-    assert captured["candidate_signal"].top_signals == ["AlphaEvolve commentary"]
+    assert captured["persona"] == "arf"
+    assert captured["bank_signal"].handle == "alice"
+    assert captured["bank_signal"].social_proximity_brokers == ["doreen", "punk6529"]
 
 
-def test_draft_intro_invalid_persona_422(app_client):
-    """Pydantic Literal violation surfaces as 422 — bad persona slug is bounced."""
+def test_enrich_invalid_persona_422(app_client):
+    """Pydantic Literal violation surfaces as 422 — sieggy is no longer a slug."""
     r = app_client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
-            "persona": "shitposter",  # not a real slug
+            "persona": "sieggy",  # removed in KO-3 v2
             "project_context": "",
-            "candidate_signal": {"handle": "alice"},
+            "bank_signal": {"handle": "alice"},
         },
         headers={"X-Sable-Service-Token": TEST_TOKEN},
     )
     assert r.status_code == 422
 
 
-def test_draft_intro_ben_returns_409(app_client, monkeypatch):
-    """Ben drafts are placeholder-blocked with structured 409 detail."""
-    called = []
-
-    def fake_draft(**_kw):
-        called.append(1)
+def test_enrich_ben_returns_409(app_client, monkeypatch):
+    def fake_enrich(**_kw):
         from sable_kol.grok_api import GrokPersonaPlaceholderError
         raise GrokPersonaPlaceholderError("ben placeholder")
 
     monkeypatch.setattr(
-        "sable_kol.preflight_service.draft_cold_intro", fake_draft
+        "sable_kol.preflight_service.enrich_candidate", fake_enrich
     )
     r = app_client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
             "persona": "ben",
             "project_context": "",
-            "candidate_signal": {"handle": "alice"},
+            "bank_signal": {"handle": "alice"},
         },
         headers={"X-Sable-Service-Token": TEST_TOKEN},
     )
@@ -609,15 +614,15 @@ def test_draft_intro_ben_returns_409(app_client, monkeypatch):
     assert body["detail"]["persona"] == "ben"
 
 
-def test_draft_intro_extra_signal_field_422(app_client):
-    """CandidateIntroSignal is extra='forbid' — unknown keys 422 before xAI."""
+def test_enrich_extra_bank_signal_field_422(app_client):
+    """CandidateBankSignal is extra='forbid' — unknown keys 422 before xAI."""
     r = app_client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
-            "persona": "sieggy",
+            "persona": "arf",
             "project_context": "",
-            "candidate_signal": {
+            "bank_signal": {
                 "handle": "alice",
                 "relationship_notes": "DO NOT LEAK ME",  # not whitelisted
             },
@@ -627,22 +632,22 @@ def test_draft_intro_extra_signal_field_422(app_client):
     assert r.status_code == 422
 
 
-def test_draft_intro_xai_failure_502(app_client, monkeypatch):
+def test_enrich_xai_failure_502(app_client, monkeypatch):
     from sable_kol.grok_api import GrokAPIError
 
-    def fake_draft(**_kw):
+    def fake_enrich(**_kw):
         raise GrokAPIError("xAI 500")
 
     monkeypatch.setattr(
-        "sable_kol.preflight_service.draft_cold_intro", fake_draft
+        "sable_kol.preflight_service.enrich_candidate", fake_enrich
     )
     r = app_client.post(
-        "/draft-intro",
+        "/enrich-candidate",
         json={
             "handle": "alice",
-            "persona": "sieggy",
+            "persona": "arf",
             "project_context": "",
-            "candidate_signal": {"handle": "alice"},
+            "bank_signal": {"handle": "alice"},
         },
         headers={"X-Sable-Service-Token": TEST_TOKEN},
     )

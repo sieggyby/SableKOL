@@ -935,32 +935,28 @@ def persona_manifest_cmd(as_json: bool) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Draft cold intro (KO-3) — operator-flavored opener via Grok
+# Enrich candidate (KO-3 v2) — operator intel via Grok with live X search
 # ---------------------------------------------------------------------------
 
 
-@cli.command(name="draft-intro")
+@cli.command(name="enrich-candidate")
 @click.argument("handle")
 @click.option(
     "--persona",
-    type=click.Choice(["sieggy", "sparta", "arf", "ben"]),
+    type=click.Choice(["arf", "sparta", "ben"]),
     required=True,
-    help="Operator persona whose voice the draft should match.",
+    help="Operator persona whose profile drives commonality computation.",
 )
 @click.option(
     "--project-context",
     default="",
-    help="One-line project context the operator is reaching out about. "
-         "Optional but recommended.",
-)
-@click.option(
-    "--display-name", default=None, help="Candidate display name (optional).",
+    help="One-line project context the operator is reaching out about.",
 )
 @click.option(
     "--bio",
     "bio_snapshot",
     default=None,
-    help="Candidate bio snapshot, ≤400 chars (optional).",
+    help="Candidate bio snapshot from the bank, ≤400 chars (optional).",
 )
 @click.option(
     "--archetype", default=None, help="Bank archetype tag (optional).",
@@ -972,58 +968,68 @@ def persona_manifest_cmd(as_json: bool) -> None:
     help="Sector tag — repeatable.",
 )
 @click.option(
-    "--top-signal",
-    "top_signals",
-    multiple=True,
-    help="One bank signal line — repeatable, max 5.",
-)
-@click.option(
     "--cluster-label", default=None, help="Cluster label from follow-graph (optional).",
 )
 @click.option(
     "--tier", default=None, help="Outreach plan tier (A/B/C/unranked, optional).",
 )
-def draft_intro_cmd(
+@click.option(
+    "--broker",
+    "brokers",
+    multiple=True,
+    help="One social_proximity_broker handle — repeatable, max 5.",
+)
+@click.option(
+    "--intro",
+    "intros",
+    multiple=True,
+    help="One operator_confirmed_intro handle — repeatable, max 3.",
+)
+@click.option(
+    "--source", default=None, help="Top discovery source (e.g. list:cahit:1234).",
+)
+def enrich_candidate_cmd(
     handle: str,
     persona: str,
     project_context: str,
-    display_name: str | None,
     bio_snapshot: str | None,
     archetype: str | None,
     sector_tags: tuple[str, ...],
-    top_signals: tuple[str, ...],
     cluster_label: str | None,
     tier: str | None,
+    brokers: tuple[str, ...],
+    intros: tuple[str, ...],
+    source: str | None,
 ) -> None:
-    """Draft a cold-intro opener for HANDLE in PERSONA's voice via Grok.
+    """Pull intel on HANDLE for operator PERSONA via xAI Grok (live X search).
 
-    Standalone — no DB lookup, no leads.json resolution. The operator is
-    expected to pass the bank signal explicitly. The SableWeb route does
-    the leads.json → CandidateIntroSignal assembly automatically; this
-    CLI is for prompt iteration / manual smell-tests.
+    Standalone — no DB lookup or kol_enrichment cache write. The
+    SableWeb route handles bank-signal assembly + caching automatically;
+    this CLI is for prompt iteration and manual smell-tests.
     """
     import json as _json
 
-    from sable_kol.grok_api import draft_cold_intro
-    from sable_kol.preflight_schemas import CandidateIntroSignal
+    from sable_kol.grok_api import enrich_candidate
+    from sable_kol.preflight_schemas import CandidateBankSignal
 
-    signal = CandidateIntroSignal(
+    bank_signal = CandidateBankSignal(
         handle=handle.lstrip("@").lower().strip(),
-        display_name=display_name,
         bio_snapshot=bio_snapshot,
         archetype=archetype,
         sector_tags=list(sector_tags),
-        top_signals=list(top_signals)[:5],
         cluster_label=cluster_label,
         tier=tier,
+        social_proximity_brokers=list(brokers)[:5],
+        operator_confirmed_intros=list(intros)[:3],
+        top_discovery_source=source,
     )
-    draft = draft_cold_intro(
+    enrichment = enrich_candidate(
         handle=handle,
         persona=persona,  # type: ignore[arg-type]
         project_context=project_context,
-        candidate_signal=signal,
+        bank_signal=bank_signal,
     )
-    click.echo(_json.dumps(draft.model_dump(), indent=2))
+    click.echo(_json.dumps(enrichment.model_dump(), indent=2))
 
 
 if __name__ == "__main__":

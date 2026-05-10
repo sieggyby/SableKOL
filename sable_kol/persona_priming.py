@@ -1,107 +1,177 @@
-"""Operator persona priming for the per-candidate Grok cold-intro draft.
+"""Operator persona profiles for the per-candidate Grok enrichment.
 
-Each Sable operator who runs outreach has a distinct voice register. A
-sieggy-flavored cold intro reads differently from an arf-flavored one,
-which reads differently from sparta. We bake those differences into the
-prompt so Grok's drafted opener matches the operator's actual style
-instead of a generic crypto-Twitter register.
+Each Sable operator who runs outreach has a distinct online identity —
+where they live, what communities they're part of, what they post about,
+who their notable mutuals are. Grok uses this profile in the
+enrichment prompt to compute *commonality* between operator and target:
+"you both posted about typewriter aesthetics in the same week"; "you both
+follow @x and they retweeted you Tuesday." That's the load-bearing
+signal the operator uses to write a non-cringe cold intro.
 
-This module is the **canonical source of truth** for the operator persona
-list. The TS persona union in SableWeb's `kol-create-schemas.ts` is
-mirrored from this module via the `sable-kol persona-manifest --json` CLI
-verb (see `sable_kol/cli.py`). Tests on both sides of the cross-repo
-boundary lockstep against the same fixture so a drift can't silently ship.
+This module is the **canonical source of truth** for operator personas.
+The TS persona union in SableWeb's `kol-create-schemas.ts` mirrors this
+via the `sable-kol persona-manifest --json` CLI verb. Tests on both
+sides of the cross-repo boundary lockstep against the same fixture.
 
-`ben` is a placeholder slug. The operator allowlist accepts him today but
-no priming text exists for his voice yet. Until the operator supplies
-real priming and flips `placeholder=False`, the sidecar and the SableWeb
-route both 409-reject any draft request resolved to ben. The block is
-deliberately not gated by "fill it out in the UI" — that would itself be
-a persona-tuning UI, which is out of scope for v1.
+History: KO-3 v1 (2026-05-10 morning) shipped these as voice-register
+priming for Grok to *write the DM*. That output was uniformly cringe.
+The redesign (KO-3 v2, this file): operator profile feeds commonality
+computation, NOT prose generation. Grok produces intel; operator
+authors. `sieggy` was removed in v2 — Sieggy doesn't run outreach
+himself.
+
+`ben` is a placeholder slug. Operator allowlist accepts him today but
+no priming text exists yet. Until the operator supplies a real profile
+and flips `placeholder=False`, the sidecar and SableWeb route both
+409-reject any enrichment request resolved to ben. The block is
+deliberately not gated by "fill it out in the UI" — that would itself
+be a persona-tuning UI, which is out of scope.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal, get_args
 
 
-PersonaSlug = Literal["sieggy", "sparta", "arf", "ben"]
+PersonaSlug = Literal["arf", "sparta", "ben"]
 
 
 @dataclass(slots=True, frozen=True)
 class PersonaPriming:
-    """Per-operator voice priming injected into the Grok cold-intro prompt.
+    """Operator profile injected into the Grok enrichment prompt.
 
-    Each field is a short, declarative sentence that conditions the model
-    without becoming the draft itself. Real-priming entries are tuned
-    iteratively from operator feedback on real candidate samples; the
-    placeholder entry is a hard 409-block until populated.
+    Used by Grok to compute commonality between operator and target.
+    All free-text fields are bounded so a poorly-edited profile can't
+    blow the prompt budget. Real-priming entries are tuned iteratively
+    from operator feedback; the placeholder entry is a hard 409-block
+    until populated.
     """
 
-    voice_register: str
-    """One sentence describing how this operator writes — tone, formality, sentence length."""
+    display_name: str
+    """How the operator likes to be referred to in the prompt — could be a
+    handle, a real first name, or a nickname. Used in the system prompt's
+    framing line ("you are drafting intel for operator @arf to read")."""
 
-    opening_style: str
-    """One sentence describing how this operator opens a cold DM — what they lead with."""
+    real_name: str | None
+    """Real legal name, if operator OK with it being sent to xAI for
+    commonality matching ("did the target tweet mentioning operator's real
+    name?"). Null for operators who prefer pseudonymity even toward Grok."""
 
-    avoid: str
-    """One sentence describing what this operator never does — register or phrasing to suppress."""
+    location: str
+    """Geo. Free text — "NYC", "Lagos / Berlin axis", "PNW". Used both for
+    geographic commonality (target is also in city X) and for cultural
+    inference (PNW-coded posting register, etc.)."""
+
+    bio: str
+    """Public-ish bio. ≤300 chars. What the operator tells the world they
+    are. Drives Grok's read on what topics + register the operator can
+    plausibly engage with."""
+
+    themes: list[str] = field(default_factory=list)
+    """Up to 6 short tags describing what the operator posts about. Drives
+    theme-overlap detection with target.recent_themes. e.g.
+    ["NFTs", "fashion-crypto", "FWB-era discourse", "DAO governance"]."""
+
+    likes: list[str] = field(default_factory=list)
+    """Up to 6 tight phrases describing what the operator likes / aligns
+    with. e.g. ["typewriter aesthetics", "low-ego curators", "open-source
+    AI bias"]. Operator-side of the likes-overlap commonality field."""
+
+    dislikes: list[str] = field(default_factory=list)
+    """Up to 4 tight phrases. e.g. ["VC-coded threads", "AI-PFP
+    accounts"]. Used in the "do not pitch as if X" inverse-commonality
+    signal."""
+
+    communities: list[str] = field(default_factory=list)
+    """Up to 6 named communities the operator participates in. e.g.
+    ["FWB", "ARKN", "Sable", "Friends With Benefits cohort", "specific
+    Discord servers"]. Drives mutual-community detection."""
+
+    notable_mutuals: list[str] = field(default_factory=list)
+    """Up to 10 bare X handles (no @) the operator interacts with regularly.
+    Used by Grok to look for shared connections: "you both follow @X and
+    they engaged with both your accounts in the last month."""
+
+    values: list[str] = field(default_factory=list)
+    """Up to 4 short phrases describing the operator's aesthetic /
+    ethical commitments. e.g. ["open-source bias", "anti-VC-coded register",
+    "low-ego curation"]. Drives values-overlap commonality."""
+
+    voice_signature: str = ""
+    """≤200 chars. One line capturing how the operator sounds in DMs —
+    register, sentence shape, what's recognizably theirs. Used by Grok
+    sparingly: not to write IN that voice, but to know "this kind of
+    target would respond well to this kind of voice."""
 
     placeholder: bool = False
-    """True for slugs the allowlist accepts but for which priming is not yet authored."""
+    """True for slugs the allowlist accepts but for which priming is not
+    yet authored. The sidecar + SableWeb route both 409-reject these."""
+
+
+# --- ARF ---
+# TODO: Sieggy is providing real values via the grill-me round. Until
+# they land, the priming is intentionally sparse — Grok gets just
+# enough signal to differentiate Arf from Sparta in the prompt without
+# fabricating commonality from thin air. Update via PR when filled.
+ARF = PersonaPriming(
+    display_name="arf",
+    real_name=None,
+    location="<TBD>",
+    bio="Sable operator. Crypto-native cultural curator. <TBD: fill in via PR>",
+    themes=["crypto culture", "fashion-crypto"],
+    likes=["low-ego curators"],
+    dislikes=["VC-coded threads"],
+    communities=["Sable", "ARKN"],
+    notable_mutuals=[],
+    values=["open-source bias"],
+    voice_signature=(
+        "warm crypto-native, peer-level observation before the pitch, "
+        "lowercase-leaning, allergic to corporate phrasing"
+    ),
+)
+
+
+# --- SPARTA ---
+# TODO: Sieggy is providing real values via the grill-me round.
+SPARTA = PersonaPriming(
+    display_name="sparta",
+    real_name=None,
+    location="<TBD>",
+    bio="Sable operator. Founder-to-founder communicator. <TBD: fill in via PR>",
+    themes=["crypto founder discourse", "ops"],
+    likes=["plain language"],
+    dislikes=["irony posting"],
+    communities=["Sable", "ARKN"],
+    notable_mutuals=[],
+    values=["business-first"],
+    voice_signature=(
+        "direct, plain-spoken, founder-to-founder. names the project, "
+        "names the ask, references one concrete reason — in that order"
+    ),
+)
+
+
+# --- BEN ---
+BEN = PersonaPriming(
+    display_name="ben",
+    real_name=None,
+    location="<placeholder>",
+    bio="<placeholder — operator must supply>",
+    themes=[],
+    likes=[],
+    dislikes=[],
+    communities=[],
+    notable_mutuals=[],
+    values=[],
+    voice_signature="<placeholder>",
+    placeholder=True,
+)
 
 
 PERSONAS: dict[PersonaSlug, PersonaPriming] = {
-    "sieggy": PersonaPriming(
-        voice_register=(
-            "Concise, lowercase-leaning, technically literate. Reads like an "
-            "engineer who's also a curator — confident but not gratuitously "
-            "clever. Sentences run short."
-        ),
-        opening_style=(
-            "Leads with one specific thing the candidate shipped or said, "
-            "then a one-line proposition. No greeting. No 'hope you're well'."
-        ),
-        avoid=(
-            "Hype words ('massive', 'huge', 'gm'), exclamation points, "
-            "compliments without a referent, and any emoji."
-        ),
-    ),
-    "sparta": PersonaPriming(
-        voice_register=(
-            "Direct, plain, business-first. A founder talking to another "
-            "founder. Sentences are full but punchy."
-        ),
-        opening_style=(
-            "Names the project, names the ask, references one concrete "
-            "reason the candidate fits — in that order."
-        ),
-        avoid=(
-            "Crypto-Twitter slang, ironic detachment, and any framing that "
-            "sounds like a cold-outreach template."
-        ),
-    ),
-    "arf": PersonaPriming(
-        voice_register=(
-            "Warm, terminally-online crypto-native. Comfortable with "
-            "lowercase, ironic register, and inside references when they "
-            "land. Knows when to drop them and write plainly."
-        ),
-        opening_style=(
-            "Opens with a peer-level observation — what's going on in the "
-            "candidate's orbit right now — before pivoting to the project."
-        ),
-        avoid=(
-            "Corporate-deck phrasing, formal sign-offs, and any line that "
-            "could be auto-generated by a SaaS outreach tool."
-        ),
-    ),
-    "ben": PersonaPriming(
-        voice_register="<placeholder — operator must supply>",
-        opening_style="<placeholder — operator must supply>",
-        avoid="<placeholder — operator must supply>",
-        placeholder=True,
-    ),
+    "arf": ARF,
+    "sparta": SPARTA,
+    "ben": BEN,
 }
 
 
@@ -152,11 +222,47 @@ def priming_for(slug: PersonaSlug) -> PersonaPriming:
     return PERSONAS[slug]
 
 
+def operator_profile_block(slug: PersonaSlug) -> str:
+    """Render the operator profile as a Markdown block for the Grok prompt.
+
+    Used by `_build_enrich_prompt` so the same operator profile shape
+    that backs commonality computation is also what gets sent to xAI —
+    no hidden fields, no shape drift. Returns a string; caller embeds.
+    """
+    p = priming_for(slug)
+    lines: list[str] = [
+        f"OPERATOR PROFILE — @{p.display_name}",
+        f"- display_name: {p.display_name}",
+    ]
+    if p.real_name:
+        lines.append(f"- real_name: {p.real_name}")
+    if p.location:
+        lines.append(f"- location: {p.location}")
+    if p.bio:
+        lines.append(f"- bio: {p.bio}")
+    if p.themes:
+        lines.append(f"- themes: {', '.join(p.themes)}")
+    if p.likes:
+        lines.append(f"- likes: {', '.join(p.likes)}")
+    if p.dislikes:
+        lines.append(f"- dislikes: {', '.join(p.dislikes)}")
+    if p.communities:
+        lines.append(f"- communities: {', '.join(p.communities)}")
+    if p.notable_mutuals:
+        lines.append(f"- notable_mutuals: {', '.join('@' + h for h in p.notable_mutuals)}")
+    if p.values:
+        lines.append(f"- values: {', '.join(p.values)}")
+    if p.voice_signature:
+        lines.append(f"- voice_signature: {p.voice_signature}")
+    return "\n".join(lines)
+
+
 __all__ = [
     "PERSONAS",
     "PersonaPriming",
     "PersonaSlug",
     "is_placeholder",
     "manifest",
+    "operator_profile_block",
     "priming_for",
 ]

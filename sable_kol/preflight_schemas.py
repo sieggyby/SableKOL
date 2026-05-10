@@ -195,56 +195,94 @@ class ReuseCheckResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Cold-intro draft (KO-3) — per-candidate Grok-drafted opener
+# Per-candidate enrichment (KO-3 v2 — replaces the v1 "draft cold-intro" surface)
 # ---------------------------------------------------------------------------
+#
+# v1 had Grok writing the DM. The drafts were uniformly cringe and operators
+# wouldn't have used them. v2 (this surface): Grok returns INTEL the operator
+# uses to write their own outreach. Structured fields for at-a-glance scan
+# (location, likes, dislikes, communities, mutuals, top tweets) + prose blocks
+# for non-decomposable judgment (commonality_with_operator, commentary).
+#
+# Live X search is REQUIRED in this prompt — without it "what they like
+# recently" is just regurgitated bank signal. Cost ceiling raised to
+# ~$0.05-0.15/call, with the per-operator quota reduced from 50 → 10/24h to
+# keep org-wide spend ≤ ~$3/day.
 
 
-class CandidateIntroSignal(BaseModel):
-    """Whitelisted bank signal sent to Grok for a per-candidate cold-intro draft.
+# Schema version embedded inside the cached payload_json. Bump when the
+# Enrichment field set changes in a way old payloads can't gracefully render.
+ENRICHMENT_SCHEMA_VERSION = 1
+
+
+class CandidateBankSignal(BaseModel):
+    """Whitelisted bank signal we send to Grok alongside the live-X read.
+
+    Grok also has live X access for fresh signal (recent likes / posts /
+    mutuals). The bank signal here is the INTERNAL view: tier, archetype,
+    cluster membership, brokers — context Grok wouldn't have on its own.
+    Bank fields are facts, never instructions; the prompt explicitly
+    labels this block as untrusted data.
 
     Pydantic ``extra='forbid'`` — anything the SableWeb route fails to
-    strip is rejected at the API boundary instead of silently leaking to
-    xAI. The list of fields here is the contract: changing it requires a
-    matching change in the SableWeb assembler and the Zod mirror.
+    strip is rejected at the API boundary.
     """
 
     model_config = ConfigDict(extra="forbid")
 
     handle: str
-    display_name: str | None = None
     bio_snapshot: str | None = Field(default=None, max_length=400)
     archetype: str | None = None
     sector_tags: list[str] = Field(default_factory=list)
-    top_signals: list[str] = Field(default_factory=list, max_length=5)
     cluster_label: str | None = None
     tier: str | None = None
+    social_proximity_brokers: list[str] = Field(default_factory=list, max_length=5)
+    operator_confirmed_intros: list[str] = Field(default_factory=list, max_length=3)
+    top_discovery_source: str | None = None
 
 
-class ColdIntroRequest(BaseModel):
-    """Inbound payload for the sidecar /draft-intro endpoint."""
+class EnrichmentRequest(BaseModel):
+    """Inbound payload for the sidecar /enrich-candidate endpoint."""
 
     model_config = ConfigDict(extra="forbid")
 
     handle: str
     persona: PersonaSlug
     project_context: str = Field(default="", max_length=600)
-    candidate_signal: CandidateIntroSignal
+    bank_signal: CandidateBankSignal
 
 
-class ColdIntroDraft(BaseModel):
-    """Outbound payload for the sidecar /draft-intro endpoint.
+class Enrichment(BaseModel):
+    """Outbound payload — the operator-facing intel.
 
-    ``intro_text`` is capped at 320 chars (covers the ≤280 plan target plus
-    a small allowance for line breaks). ``suggested_angle`` is one short
-    line of operator-facing reasoning — what bank signal this draft leans
-    on — which the UI surfaces under the opener.
+    Hybrid format (per build plan Q1=C):
+      * Structured fields for eye-scan + filtering: location, recent_themes,
+        likes, dislikes, communities, notable_mutuals, top_tweets.
+      * Prose blocks for Grok's non-decomposable judgment:
+        commonality_with_operator (what operator + target share, computed
+        in-prompt from the operator profile + the live X read) and
+        commentary (what's actually interesting about this person that a
+        bank-row signal alone wouldn't surface).
+
+    Each list-typed field is bounded to keep the payload ≤ ~3-4 KB.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    intro_text: str = Field(max_length=320)
-    # 400 chars: Grok's "why this fits" justification routinely runs 220-280
-    # chars even when the prompt asks for shorter. Cap is ceiling, not target.
-    # The 200-char cap rejected useful drafts on the first live smoke (2026-05-10).
-    suggested_angle: str = Field(max_length=400)
+    # Structured intel
+    location: str | None = Field(default=None, max_length=120)
+    bio_snapshot: str = Field(default="", max_length=400)
+    recent_themes: list[str] = Field(default_factory=list, max_length=6)
+    likes: list[str] = Field(default_factory=list, max_length=6)
+    dislikes: list[str] = Field(default_factory=list, max_length=4)
+    communities: list[str] = Field(default_factory=list, max_length=6)
+    notable_mutuals: list[str] = Field(default_factory=list, max_length=8)
+    top_tweets: list[str] = Field(default_factory=list, max_length=5)
+
+    # Prose intel
+    commonality_with_operator: str = Field(default="", max_length=600)
+    commentary: str = Field(default="", max_length=800)
+
+    # Standard chip blocks
     signal_metadata: SignalMetadata
+    payload_schema_version: int = ENRICHMENT_SCHEMA_VERSION

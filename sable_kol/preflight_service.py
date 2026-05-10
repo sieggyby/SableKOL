@@ -35,11 +35,11 @@ from sable_kol.grok_api import (
     GrokPersonaPlaceholderError,
     build_preflight_response,
     build_suggest_comparable_response,
-    draft_cold_intro,
+    enrich_candidate,
 )
 from sable_kol.preflight_schemas import (
-    ColdIntroDraft,
-    ColdIntroRequest,
+    Enrichment,
+    EnrichmentRequest,
     PreflightRequest,
     PreflightResponse,
     ReuseCheckRequest,
@@ -174,54 +174,56 @@ def suggest_comparable(
 
 
 # ---------------------------------------------------------------------------
-# /draft-intro (KO-3) — per-candidate operator-flavored cold-intro draft
+# /enrich-candidate (KO-3 v2) — per-candidate Grok intel for the operator
 # ---------------------------------------------------------------------------
+#
+# v1 was /draft-intro and shipped a "draft cold-intro opener" — Grok wrote
+# the DM. The drafts were uniformly cringe and operators wouldn't have
+# used them. v2 (this endpoint): Grok returns INTEL the operator uses to
+# write their own outreach. Live X search is required.
 
 
-@app.post("/draft-intro", response_model=ColdIntroDraft)
-def draft_intro(
-    body: ColdIntroRequest,
+@app.post("/enrich-candidate", response_model=Enrichment)
+def enrich_candidate_endpoint(
+    body: EnrichmentRequest,
     x_sable_service_token: Annotated[str | None, Header()] = None,
-) -> ColdIntroDraft:
-    """Draft a 2-3 line cold-intro opener for ``body.handle`` in ``body.persona``'s
-    voice via xAI Grok.
+) -> Enrichment:
+    """Pull intel on ``body.handle`` for operator ``body.persona`` via xAI Grok.
 
     No audit logic at this layer — SableWeb's route owns the operator
-    allowlist + per-operator quota + audit ledger. The sidecar's job is
-    only the token gate, schema enforcement (``extra='forbid'`` on the
-    Pydantic models), persona-placeholder rejection, and the xAI call.
-    Drafts are ephemeral; we do not persist them server-side.
+    allowlist + per-operator quota + audit ledger + the kol_enrichment
+    cache write. The sidecar's job is only the token gate, schema
+    enforcement (``extra='forbid'``), persona-placeholder rejection, and
+    the xAI call. Live X search is required by the prompt; cost ceiling
+    ~$0.05-0.15/call (operator-side quota caps daily spend).
     """
     _require_service_token(x_sable_service_token)
     try:
-        return draft_cold_intro(
+        return enrich_candidate(
             handle=body.handle,
             persona=body.persona,
             project_context=body.project_context,
-            candidate_signal=body.candidate_signal,
+            bank_signal=body.bank_signal,
         )
     except GrokPersonaPlaceholderError as e:
-        # Defense-in-depth: SableWeb's route also short-circuits ben before
-        # calling the sidecar. We still return 409 here so a direct sidecar
-        # caller can't bypass the placeholder block.
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "persona_placeholder", "persona": body.persona},
         ) from e
     except GrokAuthError as e:
-        logger.error("xAI auth failure on /draft-intro: %s", e)
+        logger.error("xAI auth failure on /enrich-candidate: %s", e)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="xAI auth failure — operator must draft manually",
+            detail="xAI auth failure — operator must research manually",
         ) from e
     except GrokParseError as e:
-        logger.warning("xAI parse failure on /draft-intro: %s", e)
+        logger.warning("xAI parse failure on /enrich-candidate: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"xAI returned an unparseable response: {e}",
         ) from e
     except GrokAPIError as e:
-        logger.warning("xAI request failure on /draft-intro: %s", e)
+        logger.warning("xAI request failure on /enrich-candidate: %s", e)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"xAI request failed: {e}",
