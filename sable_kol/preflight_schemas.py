@@ -243,5 +243,8 @@ class ColdIntroDraft(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     intro_text: str = Field(max_length=320)
-    suggested_angle: str = Field(max_length=200)
+    # 400 chars: Grok's "why this fits" justification routinely runs 220-280
+    # chars even when the prompt asks for shorter. Cap is ceiling, not target.
+    # The 200-char cap rejected useful drafts on the first live smoke (2026-05-10).
+    suggested_angle: str = Field(max_length=400)
     signal_metadata: SignalMetadata
