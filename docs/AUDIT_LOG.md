@@ -74,3 +74,19 @@ The wizard takes a Twitter handle, runs Grok preflight (enrich + suggest compara
 ## 2026-05-07 — KOL Network viewer + relationship tagging
 
 **SableWeb** `645556c` — `/ops/kol-network/[clientId]` route with d3-force layered network viewer, axis-scored 2D layout, outreach-plan downloads, manual relationship-tagging UI. Deployed via rsync to prod 2026-05-07; component code itself was not committed at the time and was intentionally held out of Phase A's git sweep.
+
+---
+
+## 2026-05-09 — KO-1: preflight operator-priming flags
+
+**SableKOL** `6551693` — `--context` / `--exclude-handles` / `--allow-research` flags on `sable-kol preflight` for non-fashion/web3 clients. `enrich_handle` / `suggest_comparable_projects` / `build_preflight_response` accept the new kwargs and thread into `_build_enrich_prompt` / `_build_comparable_prompt`. `FIXED_AXIS_LIBRARY` gained 5 research/AI/DeSci axes (`research-academic`, `ai-ml`, `desci-science`, `algorithmic-quant`, `e-acc-frontier`). 10 new tests across `test_grok_api.py` (CLI passthrough + prompt builder behavior) and `test_preflight_cli.py` (default + each flag + combined themes-override path). Total suite: 268 passed (was 258).
+
+Sidecar passthrough deferred to KO-1.b — `preflight_service.py` does not yet plumb the kwargs through, so wizard UI can't reach them. Bundled into KO-3 Phase 2 in the open TODO.
+
+## 2026-05-09 — KO-2: KOLNetwork zoom + pan + hide-unscored
+
+**SableWeb** `af8dbbe` — Zoom + pan viewport on the network viewer (mouse-wheel + pinch + click-drag, ZOOM_MIN=0.2/ZOOM_MAX=8). World coords from d3-force; screen coords = world × zoom + pan. Axes/edges/nodes/labels share one transform; axis-label chrome restored to screen space inside the same render pass so labels remain readable at any zoom. Default-on `hideUnscored` toggle hides the ~91% of nodes that pile at axis-zero when only one axis carries signal. Pure client-side; no API or data shape changes. Already deployed via rsync 2026-05-07; this commit was the working-tree catch-up.
+
+## 2026-05-09 — Docs split: AUDIT_LOG + slim TODO
+
+**SableKOL** `1957e32` — Created this audit log; rewrote `TODO.md` from 258 → ~80 lines focused on open work. `targets/` (operator-curated outreach artifacts) added to `.gitignore`.

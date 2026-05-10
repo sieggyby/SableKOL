@@ -5,7 +5,7 @@
 **For shipped work**, see [`docs/AUDIT_LOG.md`](docs/AUDIT_LOG.md).
 **For design rationale of the any-project wizard**, see [`docs/any_project_wizard_plan.md`](docs/any_project_wizard_plan.md).
 
-**Last updated:** 2026-05-10 — wizard live in prod; KO-1 + KO-2 shipped (`6551693` and SableWeb `af8dbbe`); KO-3 plan stable at v3 + post-self-audit corrections (correct Layer 0 file, migration-window mtime fallback, forced-regenerate as deploy step, org-wide cost ceiling). Ready to build on operator greenlight.
+**Last updated:** 2026-05-10 — wizard live in prod; KO-1 + KO-2 shipped (SableKOL `6551693` and SableWeb `af8dbbe`); KO-3 plan stable at v3 + self-audit corrections (correct Layer 0 file location, migration-window mtime fallback, forced-regenerate as deploy step, org-wide cost ceiling, internal-consistency pass). Ready to build on operator greenlight.
 
 ---
 
@@ -24,7 +24,7 @@ Code shipped in `6551693`: `enrich_handle` / `suggest_comparable_projects` / `bu
 
 Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we can bundle.
 
-### KO-3 — Per-candidate Grok enrichment button (v3, Codex round-2 audited)
+### KO-3 — Per-candidate Grok enrichment button (v3 + self-audit, Codex round-2 audited)
 
 **Memory:** `project_sablekol_grok_enrichment.md`.
 
@@ -33,7 +33,7 @@ Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we 
 **Pinned decisions (post Codex rounds 1 + 2):**
 - **Output format:** 2-3 line opener (≤ ~280 chars). Concise wins.
 - **Signal source:** **leads.json only** for v1. If the handle is absent from leads, return 404. Network JSON (`latest_network_interactive.json`) is dropped as fallback because its node schema lacks bio / sources / top_signals / cluster_label and would silently produce a worse draft.
-- **Freshness:** new `_meta.generated_at_utc` field added to `outreach_plan.to_json_payload()` (one-line fix). UI renders it as "based on bank signal from <ts>" separately from draft `signal_metadata`.
+- **Freshness:** new `_meta.generated_at_utc` field added at `scripts/build_outreach_plan.py:443` (one-line patch to the existing `payload["meta"]` dict; propagates to `leads.json` via line 513-516). UI renders it as "based on bank signal from <ts>" separately from draft `signal_metadata`. SableWeb falls back to file mtime during the migration window.
 - **Grok mode:** **prompt-policy transform** — the prompt forbids live X search, but `grok-4-latest` may invoke its tool surface at its discretion. Cost ceiling treated conservatively: **$0.005-0.01/call expected, $0.50/op/day cap at 50 attempts**. If xAI exposes a `live_search=false` request param, switch to enforced-mode and revisit ceiling.
 - **Audit:** quota-only, attempts-counted. Drafts are ephemeral. Quota wording is "**50 attempts/operator/24h**" (not "50 drafts") because `outcome='allowed'` records gate-pass before sidecar success. Even a sidecar 502 keeps the `allowed` row and counts toward quota.
 - **Persona scope:** locked to logged-in operator at v1. The UI shows a static "drafting as @<persona>" label (no dropdown).
@@ -55,7 +55,7 @@ Defer if KO-3 lands first, since KO-3 needs a similar sidecar-side touch and we 
 #### Layer 0 — `scripts/build_outreach_plan.py` (one-line patch)
 - Real `leads.json` writer is `scripts/build_outreach_plan.py`, not `outreach_plan.py`. The `_meta` block lives at line 443-457 (`payload["meta"]`) and is propagated to `leads.json` via line 513-516. **Add `"generated_at_utc": datetime.now(UTC).isoformat()`** to that meta dict (and the `from datetime import UTC, datetime` import). Both `report.json` and `leads.json` get the field for free.
 - **Migration window:** existing leads files in prod were written before this patch and have no `generated_at_utc`. SableWeb route handles this gracefully: if `_meta` exists but `generated_at_utc` is missing, fall back to the file's `stat().mtime` and label the input-freshness UI line as "approximate (file mtime)". Phase 4 deploy step explicitly forces a regenerate of all known clients to backfill.
-- Test: new `tests/test_build_outreach_plan_meta.py::test_meta_includes_generated_at_utc` asserts the field is ISO-8601-Z and present in both report.json and leads.json output paths.
+- Test: new test in existing `tests/test_outreach_plan.py` (e.g. `test_meta_includes_generated_at_utc`) asserts the field is ISO-8601-Z and present in both report.json and leads.json output paths.
 
 #### Layer 1 — `sable_kol/grok_api.py`
 - `draft_cold_intro(handle, persona, project_context, candidate_signal) -> ColdIntroDraft`. Pydantic-validated input + output. Reuses `_post_chat` so retry policy stays single-source: **5xx 1 retry, 429 3 attempts** (matches the live helper — Codex round 2 fix).
@@ -154,7 +154,8 @@ SableWeb `tests/api-kol-draft-intro.test.ts` (new, 11 tests):
 - invalid `clientId` → 404 (no audit — pre-gate)
 - handle not in leads → 404 + `error="handle_not_in_leads"`
 - handle found but `candidate_id null` → 409 + `error="candidate_pending_classification"`
-- leads file missing or stale (no `_meta.generated_at_utc`) → 503
+- leads file missing → 503
+- leads file present but `_meta.generated_at_utc` absent → 200 with `input_freshness.approximate=true` (mtime fallback during migration window)
 - ben persona short-circuits to 409 before sidecar (`error="persona_placeholder"`)
 - allowed → 200 + `allowed` row with `endpoint=DRAFT_INTRO_AUDIT_ENDPOINT`; response includes `input_freshness.generated_at_utc`
 - quota exceeded (51st attempt) → 429 + `quota_exceeded`, sidecar NOT called (assert via mock-sidecar call count = 0)
@@ -181,7 +182,7 @@ Cross-repo persona-mirror lockstep test: SableWeb test reads the persona manifes
 - Candidate-level draft history table.
 
 **Phasing (estimated ~2 days total — up from 1.5d, post round 2):**
-- **Phase 0 (~30min)** — `outreach_plan.to_json_payload()` `_meta` block + test + regenerate cadence note in `deploy/regenerate/README.md`.
+- **Phase 0 (~30min)** — one-line `_meta.generated_at_utc` addition at `scripts/build_outreach_plan.py:443` + `from datetime import UTC, datetime` import + test in `tests/test_outreach_plan.py` + a regenerate-cadence note in `deploy/regenerate/README.md`.
 - **Phase 1 (~3h)** — `grok_api.draft_cold_intro` + `persona_priming.py` + `CandidateIntroSignal` schema (with `extra='forbid'`) + 8 grok_api tests + 4 persona tests. Standalone CLI verbs `sable-kol draft-intro` and `sable-kol persona-manifest --json`.
 - **Phase 2 (~3h)** — sidecar `/draft-intro` + 6 sidecar tests. **Bundle KO-1.b** sidecar passthrough explicitly into the same commit.
 - **Phase 3 (~5h)** — SableWeb: `DRAFT_INTRO_AUDIT_ENDPOINT` constant + route + leads.json resolver + JOIN against kol_candidates + KOLTagPanel prop wiring + Zod schemas + persona-manifest fixture + 11 route tests + 6 component tests + cross-repo persona-mirror lockstep.
@@ -213,8 +214,8 @@ Cross-repo persona-mirror lockstep test: SableWeb test reads the persona manifes
 
 | Codex round-2 finding | v3 response |
 |---|---|
-| **Blocker:** `leads_meta_generated_at_utc` does not exist | New Layer 0: `outreach_plan.to_json_payload()` adds `_meta.generated_at_utc`. One-line fix + dedicated test. Regenerate cadence rewrites existing leads files. |
-| **Blocker:** network fallback cannot satisfy `CandidateIntroSignal` | Network fallback dropped. Leads.json is the only signal source for v1; 404 if handle missing, 409 if `candidate_id` null, 503 if leads file missing/stale. |
+| **Blocker:** `leads_meta_generated_at_utc` does not exist | New Layer 0: one-line `_meta.generated_at_utc` patch at `scripts/build_outreach_plan.py:443` (the actual writer; my round-2 response misidentified the location and the self-audit corrected it). Dedicated test. Phase 4 forces a regenerate to backfill existing files. SableWeb route falls back to file mtime during the migration window. |
+| **Blocker:** network fallback cannot satisfy `CandidateIntroSignal` | Network fallback dropped. Leads.json is the only signal source for v1; 404 if handle missing, 409 if `candidate_id` null, 503 if leads file missing. (Migration-window: missing `_meta.generated_at_utc` no longer 503s — falls back to mtime + flag.) |
 | **Blocker:** Ben placeholder implies out-of-scope UI | Ben drafts disabled: 409 `persona_placeholder` from both sidecar (defense in depth) and SableWeb route (early short-circuit). Manual cohort = 15 real + 1 ben-blocked test. No in-flow operator-fill UI. |
 | **Critical:** transform-only is not API-enforced | Reframed honestly: prompt-policy transform, not enforcement. Cost ceiling raised to $0.005-0.01/call expected; 50-attempt/op/day cap = ~$0.50/op/day. If xAI surfaces an API-level no-search flag, switch and revisit. |
 | **Critical:** 503 retry test mismatches live helper | Retry test corrected: **5xx success on attempt 2** (matches `_post_chat`'s 1-retry policy). Separate test for 429 success on attempt 3. |
