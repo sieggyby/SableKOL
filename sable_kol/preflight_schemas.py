@@ -100,6 +100,18 @@ class EnrichedHandle(BaseModel):
     def _coerce_none_to_empty(cls, v):
         return "" if v is None else v
 
+    # Same shape for booleans Grok renders as null when unknown (e.g. `verified`
+    # for accounts whose blue-check state isn't visible in the live X read).
+    # Treat null as the conservative default rather than failing schema validation.
+    @field_validator("verified", "is_active", "real_name_known", mode="before")
+    @classmethod
+    def _coerce_none_bool(cls, v, info):
+        if v is None:
+            # is_active defaults to True (account exists unless proven otherwise);
+            # verified and real_name_known default to False (don't claim what's not visible).
+            return True if info.field_name == "is_active" else False
+        return v
+
 
 class PreflightRequest(BaseModel):
     handle: str
