@@ -48,6 +48,11 @@ from sable_kol.preflight_schemas import (
     SuggestComparableRequest,
     SuggestComparableResponse,
 )
+from sable_kol.socialdata_live import (
+    LiveDataBalanceExhaustedError,
+    LiveDataHandleNotFoundError,
+    LiveDataUnavailableError,
+)
 from sable_kol.reuse import cohorts_to_fetch, estimate_fetch_cost_usd
 
 
@@ -209,6 +214,30 @@ def enrich_candidate_endpoint(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={"error": "persona_placeholder", "persona": body.persona},
+        ) from e
+    except LiveDataHandleNotFoundError as e:
+        # 404 surfaces cleanly to the UI as "handle doesn't exist on X
+        # right now" — the operator wasted no xAI cost. The candidate's
+        # leads.json row should probably be marked is_unresolved upstream.
+        logger.info("SocialData says @%s not found on /enrich-candidate: %s", body.handle, e)
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail={"error": "handle_not_found", "handle": body.handle},
+        ) from e
+    except LiveDataBalanceExhaustedError as e:
+        logger.error("SocialData balance exhausted on /enrich-candidate: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "socialdata_balance_exhausted"},
+        ) from e
+    except LiveDataUnavailableError as e:
+        # Network / auth / 5xx failure. Don't fall back to Grok-only
+        # enrichment — KO-3 v2.5 was specifically designed to avoid the
+        # confabulation problem of running Grok without real material.
+        logger.warning("SocialData unavailable on /enrich-candidate: %s", e)
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail={"error": "live_data_unavailable", "message": str(e)},
         ) from e
     except GrokAuthError as e:
         logger.error("xAI auth failure on /enrich-candidate: %s", e)

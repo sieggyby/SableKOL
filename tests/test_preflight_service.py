@@ -652,3 +652,79 @@ def test_enrich_xai_failure_502(app_client, monkeypatch):
         headers={"X-Sable-Service-Token": TEST_TOKEN},
     )
     assert r.status_code == 502
+
+
+def test_enrich_socialdata_handle_not_found_404(app_client, monkeypatch):
+    """SocialData says the handle doesn't resolve on X → 404 to operator."""
+    from sable_kol.socialdata_live import LiveDataHandleNotFoundError
+
+    def fake_enrich(**_kw):
+        raise LiveDataHandleNotFoundError("ghost doesn't exist")
+
+    monkeypatch.setattr(
+        "sable_kol.preflight_service.enrich_candidate", fake_enrich
+    )
+    r = app_client.post(
+        "/enrich-candidate",
+        json={
+            "handle": "ghost",
+            "persona": "arf",
+            "project_context": "",
+            "bank_signal": {"handle": "ghost"},
+        },
+        headers={"X-Sable-Service-Token": TEST_TOKEN},
+    )
+    assert r.status_code == 404
+    body = r.json()
+    assert body["detail"]["error"] == "handle_not_found"
+    assert body["detail"]["handle"] == "ghost"
+
+
+def test_enrich_socialdata_balance_exhausted_503(app_client, monkeypatch):
+    """SocialData balance depleted → 503 surfaces clearly to UI."""
+    from sable_kol.socialdata_live import LiveDataBalanceExhaustedError
+
+    def fake_enrich(**_kw):
+        raise LiveDataBalanceExhaustedError("balance")
+
+    monkeypatch.setattr(
+        "sable_kol.preflight_service.enrich_candidate", fake_enrich
+    )
+    r = app_client.post(
+        "/enrich-candidate",
+        json={
+            "handle": "alice",
+            "persona": "arf",
+            "project_context": "",
+            "bank_signal": {"handle": "alice"},
+        },
+        headers={"X-Sable-Service-Token": TEST_TOKEN},
+    )
+    assert r.status_code == 503
+    body = r.json()
+    assert body["detail"]["error"] == "socialdata_balance_exhausted"
+
+
+def test_enrich_socialdata_unavailable_503(app_client, monkeypatch):
+    """Any other SocialData failure → 503 — never fall back to Grok-only."""
+    from sable_kol.socialdata_live import LiveDataUnavailableError
+
+    def fake_enrich(**_kw):
+        raise LiveDataUnavailableError("network error")
+
+    monkeypatch.setattr(
+        "sable_kol.preflight_service.enrich_candidate", fake_enrich
+    )
+    r = app_client.post(
+        "/enrich-candidate",
+        json={
+            "handle": "alice",
+            "persona": "arf",
+            "project_context": "",
+            "bank_signal": {"handle": "alice"},
+        },
+        headers={"X-Sable-Service-Token": TEST_TOKEN},
+    )
+    assert r.status_code == 503
+    body = r.json()
+    assert body["detail"]["error"] == "live_data_unavailable"

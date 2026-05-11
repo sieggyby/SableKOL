@@ -252,6 +252,22 @@ class EnrichmentRequest(BaseModel):
     bank_signal: CandidateBankSignal
 
 
+class LiveDataSource(BaseModel):
+    """Provenance block for the SocialData material that grounded the enrichment.
+
+    Surfaced to the operator UI so they can see "this intel was grounded
+    in N real tweets fetched at <ts>" — distinguishes a real-data
+    enrichment from a sparse / fabrication-prone one.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    provider: str = "socialdata"
+    fetched_at_utc: str
+    tweet_count: int = 0
+    profile_present: bool = True
+
+
 class Enrichment(BaseModel):
     """Outbound payload — the operator-facing intel.
 
@@ -260,11 +276,15 @@ class Enrichment(BaseModel):
         likes, dislikes, communities, notable_mutuals, top_tweets.
       * Prose blocks for Grok's non-decomposable judgment:
         commonality_with_operator (what operator + target share, computed
-        in-prompt from the operator profile + the live X read) and
+        from the operator profile + the SocialData-fetched tweets) and
         commentary (what's actually interesting about this person that a
         bank-row signal alone wouldn't surface).
 
     Each list-typed field is bounded to keep the payload ≤ ~3-4 KB.
+
+    ``live_data_source`` carries provenance for the SocialData material
+    Grok interpreted (replacing the v2 design's "Grok uses live X
+    search" assumption, which turned out to not be real on grok-4-latest).
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -283,6 +303,7 @@ class Enrichment(BaseModel):
     commonality_with_operator: str = Field(default="", max_length=600)
     commentary: str = Field(default="", max_length=800)
 
-    # Standard chip blocks
+    # Provenance + signal metadata
+    live_data_source: LiveDataSource | None = None
     signal_metadata: SignalMetadata
     payload_schema_version: int = ENRICHMENT_SCHEMA_VERSION
