@@ -198,61 +198,140 @@ ARF = PersonaPriming(
 
 
 # --- SPARTA ---
-# Verified 2026-05-10: real X handle is @0x_Asuka (Sieggy confirmed; my
-# earlier Grok-search hallucinated @0xSparta). George/Sparta is anon —
-# real_name intentionally null. The bio is grounded in known facts;
-# everything below `bio` is conservative stub until Sieggy grills him out.
+# Filled out 2026-05-10 (v2) from a SocialData read of his actual X
+# timeline (30 recent tweets + canonical profile). Earlier placeholder
+# had to guess; the real account turned out far more distinctive than
+# inferred. He's TIG-leadership-adjacent (hosts AMAs with
+# @Dr_JohnFletcher, uses "we/our" framing about the protocol), heavy
+# thesis-poster register, transhuman/gnostic vocabulary, references
+# Squaresoft / Parasite Eve / Evangelion's Magi fluidly. The display
+# "Sparta (𝔦, 𝔦)" is the imaginary-unit pair — a math/transhuman signal.
 SPARTA = PersonaPriming(
     display_name="Sparta",
     twitter_handle="0x_Asuka",
     real_name=None,
     location="",
     bio=(
-        "Co-runs ARKN and Sable. Pseudonymous online as 'Asuka'; known "
-        "internally as 'Sparta'. Builds with Arf and Sieggy. Maintains a "
-        "TIG ARG side project at 329ga8dh4x.com — sanctioned-ish creative "
-        "experiment, not impersonation. Direct and founder-to-founder "
-        "register. <Profile fields below are stubs; refine via grill-me.>"
+        "Web3 researcher since 2017, VC since 2020 (verbatim X bio: "
+        "'Transhumanist Gnostic. Mana-Sama fan account.'). Co-runs ARKN "
+        "and Sable; known internally as 'Sparta', anon online as 'Asuka'. "
+        "Deeply embedded in TIG — hosts community AMAs with "
+        "@Dr_JohnFletcher, frames himself with 'we/our' about the "
+        "protocol. Heavy thesis-poster: $TIG-as-next-$TAO assertions "
+        "mixed with anime + retro-gaming + religious-adjacent side-quests. "
+        "Maintains a TIG ARG side project at 329ga8dh4x.com."
     ),
-    themes=["crypto founder discourse", "ops", "TIG", "ARGs"],
-    likes=["plain language"],
-    dislikes=["irony posting"],
-    communities=["Sable", "ARKN", "TIG"],
-    notable_mutuals=["CahitArf11", "siegby"],
-    values=["business-first"],
+    themes=[
+        "TIG ecosystem",
+        "algorithmic innovation vs hardware scaling",
+        "AGI / superintelligence",
+        "transhumanism / gnostic theology",
+        "Squaresoft / PS1-era games",
+        "anime (Evangelion-coded)",
+        "web3 research",
+        "decentralized AI",
+    ],
+    likes=[
+        "Mana-Sama (Malice Mizer / Moi dix Mois)",
+        "Parasite Eve / Squaresoft retro",
+        "Evangelion's Magi as multi-agent superintelligence",
+        "Karpathy on open-source AI",
+        "Bryan Johnson Don't Die orbit",
+        "math-coded handles + sigils",
+    ],
+    dislikes=[
+        "speculative capital that ignores algorithmic innovation",
+        "hardware-only AI scaling narratives",
+        "shallow $TIG dismissal",
+    ],
+    communities=[
+        "TIG core (leadership-adjacent)",
+        "Sable", "ARKN",
+        "Mana-Sama fan circuit",
+        "transhumanist / gnostic X niches",
+        "retro-gaming + anime mutuals",
+    ],
+    notable_mutuals=[
+        "tigfoundation", "Dr_JohnFletcher", "CreateTheDots",
+        "CahitArf11", "siegby", "karpathy", "HEAVYWASH_",
+    ],
+    values=[
+        "transhumanist / gnostic-religious frame",
+        "decentralized open algorithmic innovation",
+        "anti-shallow-speculation",
+        "aesthetic + intellectual coherence over polish",
+    ],
     voice_signature=(
-        "direct, plain-spoken, founder-to-founder. names the project, "
-        "names the ask, references one concrete reason — in that order"
+        "assertive thesis-poster — 'you heard it here first' confidence. "
+        "Mixes high-conviction TIG evangelism with anime, religious, "
+        "transhuman side-quests fluidly. Cites Karpathy, Bryan Johnson, "
+        "Evangelion, Squaresoft in the same breath. Math-sigil register "
+        "in bio + handle."
     ),
 )
 
 
 # --- ALEX ---
-# Added 2026-05-10. Alex Malone (alex@arkn.io, @CreateTheDots). ARKN
-# co-builder + Sable operator. Grok research returned thin signal
-# (account active but limited public posting visible to live X search);
-# verified fields are grounded, the rest are conservative stubs until
-# a grill-me round fills them.
+# Filled out 2026-05-10 (v2) from a SocialData read of his actual X
+# timeline. Earlier Grok-inferred profile was generic; real timeline
+# revealed he's a TIG amplifier in pure form — ~80% of his recent
+# 20 tweets are @tigfoundation retweets. When he posts originally, it's
+# TIG-thesis hype ("world-shifting implications") or longevity-adjacent
+# pivots (Don't Die / Bryan Johnson reply about DD + TIG as
+# 'natural bedfellows'). Display "Ale𝕏" uses the mathematical italic X.
 ALEX = PersonaPriming(
     display_name="Alex",
     twitter_handle="CreateTheDots",
     real_name="Alex Malone",
     location="San Francisco, CA",
     bio=(
-        "Alex Malone. ARKN co-builder, Sable operator. Works on tech + "
-        "creativity + community ecosystems. Email alex@arkn.io. "
-        "<Profile fields below are stubs from limited Grok research; "
-        "refine via grill-me when ready.>"
+        "Alex Malone. ARKN co-builder, Sable operator. Verbatim X bio: "
+        "'Collaborations in Science & Tech.' Verified, 3.9K followers, "
+        "10K+ lifetime tweets. Heavy TIG amplifier — most recent timeline "
+        "is @tigfoundation retweets. When he posts originally, frames "
+        "TIG as 'world-shifting' for humanity's future. Longevity-curious "
+        "(replied to Bryan Johnson framing Don't Die + TIG as 'natural "
+        "bedfellows'). Boost-mode rather than thesis-mode poster."
     ),
-    themes=["tech", "agency building", "community ecosystems"],
-    likes=[],
-    dislikes=[],
-    communities=["ARKN", "Sable"],
-    notable_mutuals=["CahitArf11", "0x_Asuka", "siegby"],
-    values=[],
+    themes=[
+        "TIG ecosystem",
+        "algorithmic innovation",
+        "longevity / Don't Die",
+        "open-innovation evangelism",
+        "biotech adjacent",
+        "blockchain on Base",
+        "science + tech collaborations",
+    ],
+    likes=[
+        "TIG protocol momentum",
+        "Bryan Johnson Don't Die orbit",
+        "Cudis Wellness / wearables",
+        "ambitious research framings",
+        "long-game open-innovation moves",
+    ],
+    dislikes=[],  # Sparse — Alex is amplifier-mode; dislikes don't surface in retweets
+    communities=[
+        "TIG (community member, not core)",
+        "ARKN", "Sable",
+        "New Paradigm Institute orbit",
+        "Don't Die / biotech longevity",
+        "Lab Tokens / Cudis Wellness",
+    ],
+    notable_mutuals=[
+        "tigfoundation", "0x_Asuka", "Dr_JohnFletcher", "CahitArf11",
+        "siegby", "bryan_johnson", "NewParadigmInst", "heavyweight",
+        "labtokensol",
+    ],
+    values=[
+        "open-innovation evangelism",
+        "longevity-curious",
+        "amplify-the-signal posting ethos",
+    ],
     voice_signature=(
-        "<stub — refine via grill-me. Likely a thoughtful, building-focused "
-        "register; reach out to verify before relying on this for tone."
+        "amplifier register: mostly retweets earnest aligned voices. "
+        "When he writes originally, leans 'world-shifting implications' "
+        "and 'humanity's future' framing. Sincere, hype-adjacent without "
+        "shilling. Glyph play on his own handle (Ale𝕏 with math italic)."
     ),
 )
 
