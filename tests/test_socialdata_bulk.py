@@ -27,6 +27,218 @@ def _good_profile(**overrides) -> dict:
     return base
 
 
+# ---------------------------------------------------------------------------
+# KO-7: httpx-direct SocialData fallback (used when Slopper isn't installed,
+# e.g. inside the production preflight sidecar Docker image which ships only
+# the [service] extra, not [paid-enrich]).
+# ---------------------------------------------------------------------------
+
+
+def _patch_slopper_unavailable(monkeypatch):
+    """Force the ImportError branch of _default_*_fetcher by making
+    `from sable.shared.socialdata import socialdata_get` fail. Mirrors the
+    runtime condition inside the production sidecar Docker image."""
+    real_import = (
+        __builtins__["__import__"]
+        if isinstance(__builtins__, dict)
+        else __import__
+    )
+
+    def fake_import(name, *args, **kwargs):
+        if name == "sable.shared.socialdata":
+            raise ImportError("Slopper not installed in this image")
+        return real_import(name, *args, **kwargs)
+
+    monkeypatch.setattr("builtins.__import__", fake_import)
+
+
+def _patch_httpx(monkeypatch, handler):
+    """Swap httpx.Client globally so the SocialData calls in
+    _httpx_socialdata_get run against the in-memory handler. Binds the
+    real Client class to a local before patching so the factory itself
+    doesn't recurse through the monkeypatched name."""
+    import httpx
+
+    real_client_cls = httpx.Client
+
+    def factory(**_kw):
+        return real_client_cls(transport=httpx.MockTransport(handler))
+
+    monkeypatch.setattr("httpx.Client", factory)
+
+
+def test_httpx_fallback_happy_path(monkeypatch):
+    """When Slopper isn't importable, _default_profile_fetcher uses httpx
+    directly with the SOCIALDATA_API_KEY env var."""
+    import httpx
+
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+    captured_url = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured_url.append(str(req.url))
+        return httpx.Response(200, json={"id_str": "42", "screen_name": "alice"})
+
+    _patch_slopper_unavailable(monkeypatch)
+    _patch_httpx(monkeypatch, handler)
+
+    result = bulk._default_profile_fetcher("alice")
+    assert result["id_str"] == "42"
+    assert "/twitter/user/alice" in captured_url[0]
+
+
+def test_httpx_fallback_missing_api_key_raises(monkeypatch):
+    """If SOCIALDATA_API_KEY isn't set, the fallback raises a clear error
+    rather than silently no-op-ing or making a request without auth."""
+    monkeypatch.delenv("SOCIALDATA_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="SOCIALDATA_API_KEY"):
+        bulk._httpx_socialdata_get("/twitter/user/alice")
+
+
+def test_httpx_fallback_402_raises_balance_exhausted(monkeypatch):
+    """402 from SocialData → BalanceExhaustedError (same class as Slopper's
+    so callers' existing `except BalanceExhaustedError` clauses still work)."""
+    import httpx
+
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+    _patch_httpx(
+        monkeypatch,
+        lambda req: httpx.Response(402, text="balance exhausted"),
+    )
+    with pytest.raises(bulk.BalanceExhaustedError):
+        bulk._httpx_socialdata_get("/twitter/user/alice")
+
+
+def test_httpx_fallback_5xx_exhausts_retries(monkeypatch):
+    """5xx retries up to 5 attempts (4 retries) then raises HTTPStatusError.
+    Sleep is monkeypatched to keep the test fast."""
+    import httpx
+
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(503, text="down")
+
+    _patch_httpx(monkeypatch, handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        bulk._httpx_socialdata_get("/twitter/user/alice")
+    assert len(calls) == 5  # initial + 4 retries
+
+
+def test_httpx_fallback_5xx_then_success(monkeypatch):
+    """5xx on first attempt + 200 on retry → returns body, no error."""
+    import httpx
+
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        if len(calls) == 1:
+            return httpx.Response(502, text="briefly down")
+        return httpx.Response(200, json={"id_str": "42"})
+
+    _patch_httpx(monkeypatch, handler)
+    result = bulk._httpx_socialdata_get("/twitter/user/alice")
+    assert result["id_str"] == "42"
+    assert len(calls) == 2
+
+
+def test_httpx_fallback_4xx_non_retryable_fails_fast(monkeypatch):
+    """Non-retryable 4xx (e.g. 404 / 400) raises on the FIRST attempt rather
+    than burning retry budget — avoids 4× pointless wait for a permanent error."""
+    import httpx
+
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+    monkeypatch.setattr("time.sleep", lambda _s: None)
+
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        calls.append(1)
+        return httpx.Response(404, text="not found")
+
+    _patch_httpx(monkeypatch, handler)
+    with pytest.raises(httpx.HTTPStatusError):
+        bulk._httpx_socialdata_get("/twitter/user/ghost")
+    assert len(calls) == 1
+
+
+def test_httpx_fallback_path_fetcher_passes_params(monkeypatch):
+    """_default_path_fetcher (used for /twitter/followers/list etc.) must
+    pass through the params dict to the SocialData call. Without this the
+    pagination cursor + per-handle filters wouldn't reach SocialData and
+    the bulk-fetch would return the wrong page."""
+    import httpx
+
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+
+    captured_params = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        captured_params.append(dict(req.url.params))
+        return httpx.Response(200, json={"users": [], "next_cursor": None})
+
+    _patch_slopper_unavailable(monkeypatch)
+    _patch_httpx(monkeypatch, handler)
+
+    result = bulk._default_path_fetcher(
+        "/twitter/followers/list",
+        params={"user_id": "12345", "cursor": "-1"},
+    )
+    assert result == {"users": [], "next_cursor": None}
+    assert captured_params[0] == {"user_id": "12345", "cursor": "-1"}
+
+
+def test_httpx_fallback_prefers_slopper_when_available(monkeypatch):
+    """Sanity check: when Slopper IS importable, the wrapper is used —
+    NOT the httpx fallback. This keeps laptop-dev workflows unchanged
+    and only the production sidecar takes the fallback path."""
+    monkeypatch.setenv("SOCIALDATA_API_KEY", "sd-test")
+    # No import patching → Slopper IS available in the test env.
+
+    called = []
+
+    # Stub Slopper's socialdata_get so we can assert it was called.
+    import sys, types
+
+    if "sable.shared" not in sys.modules:
+        # Set up a minimal stand-in if Slopper isn't installed in the test
+        # venv either. The point is just to verify the IF-branch is taken.
+        shared = types.ModuleType("sable.shared")
+        socialdata = types.ModuleType("sable.shared.socialdata")
+
+        def fake_socialdata_get(path, params=None):
+            called.append(("slopper", path, params))
+            return {"id_str": "via_slopper"}
+
+        socialdata.socialdata_get = fake_socialdata_get
+        socialdata.BalanceExhaustedError = bulk.BalanceExhaustedError
+        sable_mod = sys.modules.get("sable") or types.ModuleType("sable")
+        sys.modules["sable"] = sable_mod
+        sys.modules["sable.shared"] = shared
+        sys.modules["sable.shared.socialdata"] = socialdata
+    else:
+        # Real Slopper present — patch its socialdata_get to capture the call.
+        from sable.shared import socialdata as sd_mod
+
+        def fake_socialdata_get(path, params=None):
+            called.append(("slopper", path, params))
+            return {"id_str": "via_slopper"}
+
+        monkeypatch.setattr(sd_mod, "socialdata_get", fake_socialdata_get)
+
+    result = bulk._default_profile_fetcher("alice")
+    assert result["id_str"] == "via_slopper"
+    assert called and called[0][0] == "slopper"
+
+
 def test_qc_profile_accepts_complete_profile():
     assert bulk.qc_profile(_good_profile()) is True
 

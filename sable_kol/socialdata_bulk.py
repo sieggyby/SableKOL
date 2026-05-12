@@ -41,11 +41,16 @@ responsibility.
 from __future__ import annotations
 
 import json
+import logging
+import os
 import uuid
 from dataclasses import dataclass
 from typing import Any, Callable, Iterator
 
 from sable_kol import cost as cost_mod
+
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -540,22 +545,140 @@ def _classify_failure(exc: Exception) -> str:
 # ---------------------------------------------------------------------------
 
 def _default_profile_fetcher(handle: str) -> dict:
+    """Resolve a single X handle via SocialData.
+
+    Prefers Slopper's wrapper (preserves any cross-suite caching /
+    instrumentation Slopper adds) but falls back to direct httpx when
+    Slopper isn't installed — that's the production-sidecar case where
+    ``Dockerfile.preflight`` deliberately ships only the ``[service]``
+    extra to keep the image lean. Without this fallback, the sidecar
+    can't run ``sable-kol bulk-fetch`` and the regenerate cycle has
+    to be SSH-tunneled from a laptop with Slopper installed (see KO-7
+    in TODO.md, fixed 2026-05-11).
+    """
     try:
         from sable.shared.socialdata import socialdata_get  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise RuntimeError(
-            "SocialData paid path requires Slopper. "
-            "Install with: pip install -e '.[paid-enrich]'"
-        ) from e
+    except ImportError:
+        return _httpx_socialdata_get(f"/twitter/user/{handle}")
     return socialdata_get(f"/twitter/user/{handle}")
 
 
 def _default_path_fetcher(path: str, params: dict) -> dict:
+    """Generic SocialData GET wrapper used by the bulk-fetch path
+    (``/twitter/followers/list``, ``/twitter/friends/list``, etc.).
+
+    Same Slopper-or-httpx-fallback pattern as
+    :func:`_default_profile_fetcher` — see its docstring for the
+    motivation. Cost-tracking is the caller's job; this layer only
+    handles the HTTP semantics.
+    """
     try:
         from sable.shared.socialdata import socialdata_get  # type: ignore[import-not-found]
-    except ImportError as e:
-        raise RuntimeError(
-            "SocialData paid path requires Slopper. "
-            "Install with: pip install -e '.[paid-enrich]'"
-        ) from e
+    except ImportError:
+        return _httpx_socialdata_get(path, params=params)
     return socialdata_get(path, params=params)
+
+
+# ---------------------------------------------------------------------------
+# In-repo SocialData fallback (used when Slopper isn't installed — i.e.
+# the production preflight sidecar's Docker image, which ships only the
+# [service] extra). Mirrors Slopper's retry semantics: 5 attempts with
+# exponential backoff (1, 4, 16, 64s nominal × 0.5-1.5 jitter) on
+# 429 / 5xx / network errors. Raises BalanceExhaustedError on 402 —
+# imported from Slopper if available, locally defined otherwise so
+# callers can do a single except-clause.
+# ---------------------------------------------------------------------------
+
+
+_SOCIALDATA_BASE_URL = "https://api.socialdata.tools"
+_SOCIALDATA_MAX_RETRIES = 4   # 5 total attempts
+_SOCIALDATA_BASE_DELAY = 1.0
+
+
+try:
+    # Re-export Slopper's BalanceExhaustedError when available so callers
+    # that already catch it from `sable.shared.socialdata` don't get a
+    # different exception type back in the fallback path.
+    from sable.shared.socialdata import BalanceExhaustedError  # type: ignore[import-not-found]
+except ImportError:
+    class BalanceExhaustedError(Exception):  # type: ignore[no-redef]
+        """Raised on SocialData HTTP 402 (account balance depleted)."""
+
+
+def _httpx_socialdata_get(
+    path: str,
+    params: dict | None = None,
+    timeout: float = 30.0,
+) -> dict:
+    """Direct httpx fallback for SocialData GET when Slopper isn't installed.
+
+    Behavioral parity with ``sable.shared.socialdata.socialdata_get``:
+    same retry policy (5 attempts, exponential backoff with jitter on
+    429 / 5xx / transport errors), same exception types (402 →
+    :class:`BalanceExhaustedError`, other 4xx → raise immediately,
+    exhausted 5xx/429 → raise via ``resp.raise_for_status()``).
+
+    Auth via ``SOCIALDATA_API_KEY`` env var. Hard-fails on missing key —
+    caller is expected to have it configured.
+    """
+    import random
+    import time
+
+    import httpx
+
+    api_key = os.environ.get("SOCIALDATA_API_KEY")
+    if not api_key:
+        raise RuntimeError(
+            "SOCIALDATA_API_KEY is not set — required for the SocialData "
+            "paid path. Set the env var on the sidecar (or wherever this "
+            "code runs)."
+        )
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Accept": "application/json",
+    }
+    url = f"{_SOCIALDATA_BASE_URL}{path}"
+
+    last_exc: Exception | None = None
+    with httpx.Client(headers=headers, timeout=timeout) as client:
+        for attempt in range(_SOCIALDATA_MAX_RETRIES + 1):
+            try:
+                resp = client.get(url, params=params)
+            except httpx.HTTPError as exc:
+                last_exc = exc
+                if attempt < _SOCIALDATA_MAX_RETRIES:
+                    delay = _SOCIALDATA_BASE_DELAY * (4 ** attempt) * (0.5 + random.random())
+                    logger.warning(
+                        "SocialData network error on %s (attempt %d): %s — retrying in %.1fs",
+                        path, attempt + 1, exc, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                raise
+
+            if resp.status_code == 402:
+                raise BalanceExhaustedError(
+                    f"SocialData balance exhausted (HTTP 402) on {path}. "
+                    "Top up the account — no retry will help."
+                )
+
+            if resp.status_code in (429, 500, 502, 503, 504):
+                last_exc = httpx.HTTPStatusError(
+                    f"HTTP {resp.status_code}", request=resp.request, response=resp,
+                )
+                if attempt < _SOCIALDATA_MAX_RETRIES:
+                    delay = _SOCIALDATA_BASE_DELAY * (4 ** attempt) * (0.5 + random.random())
+                    logger.warning(
+                        "SocialData %d on %s (attempt %d) — retrying in %.1fs",
+                        resp.status_code, path, attempt + 1, delay,
+                    )
+                    time.sleep(delay)
+                    continue
+                resp.raise_for_status()
+
+            # Any other 4xx → raise immediately
+            resp.raise_for_status()
+            return resp.json()
+
+    # Defensive — shouldn't reach here, but satisfy the type checker.
+    raise last_exc or RuntimeError("SocialData request failed")  # pragma: no cover
