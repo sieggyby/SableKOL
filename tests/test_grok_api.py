@@ -637,8 +637,8 @@ def test_enrich_candidate_logs_cost_two_phase_socialdata_then_grok(monkeypatch):
     client = _mock_client(lambda req: _xai_response_with_usage(GOOD_ENRICHMENT))
     cost_calls = []
 
-    def stub_logger(handle, tweet_count, grok_usage=None):
-        cost_calls.append((handle, tweet_count, grok_usage))
+    def stub_logger(handle, tweet_count, grok_usage=None, client_id=None):
+        cost_calls.append((handle, tweet_count, grok_usage, client_id))
 
     grok_api.enrich_candidate(
         handle="alice", persona="arf", project_context="",
@@ -647,14 +647,15 @@ def test_enrich_candidate_logs_cost_two_phase_socialdata_then_grok(monkeypatch):
         cost_logger=stub_logger,
     )
     assert len(cost_calls) == 2
-    # Phase 1: SocialData only — grok_usage=None
-    assert cost_calls[0] == ("alice", 3, None)
+    # Phase 1: SocialData only — grok_usage=None, client_id None (CLI-style)
+    assert cost_calls[0] == ("alice", 3, None, None)
     # Phase 2: Grok — grok_usage carries the token counts
     assert cost_calls[1][0] == "alice"
     assert cost_calls[1][1] == 3  # tweet_count echoed for context
     assert cost_calls[1][2] is not None
     assert cost_calls[1][2]["prompt_tokens"] == 4000
     assert cost_calls[1][2]["completion_tokens"] == 600
+    assert cost_calls[1][3] is None  # No client_id passed → None
 
 
 def test_enrich_candidate_logs_cost_for_empty_tweet_pull(monkeypatch):
@@ -665,8 +666,8 @@ def test_enrich_candidate_logs_cost_for_empty_tweet_pull(monkeypatch):
     client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
     cost_calls = []
 
-    def stub_logger(handle, tweet_count, grok_usage=None):
-        cost_calls.append((handle, tweet_count, grok_usage))
+    def stub_logger(handle, tweet_count, grok_usage=None, client_id=None):
+        cost_calls.append((handle, tweet_count, grok_usage, client_id))
 
     grok_api.enrich_candidate(
         handle="alice", persona="arf", project_context="",
@@ -676,7 +677,7 @@ def test_enrich_candidate_logs_cost_for_empty_tweet_pull(monkeypatch):
     )
     # Two calls (phase 1 + phase 2) even with no tweets.
     assert len(cost_calls) == 2
-    assert cost_calls[0] == ("alice", 0, None)
+    assert cost_calls[0] == ("alice", 0, None, None)
 
 
 def test_enrich_candidate_proceeds_when_cost_logger_raises(monkeypatch):
@@ -685,7 +686,7 @@ def test_enrich_candidate_proceeds_when_cost_logger_raises(monkeypatch):
     monkeypatch.setenv("XAI_API_KEY", "x-test")
     client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
 
-    def boom(handle, tweet_count, grok_usage=None):
+    def boom(handle, tweet_count, grok_usage=None, client_id=None):
         raise RuntimeError("DB connection refused")
 
     e = grok_api.enrich_candidate(
@@ -707,8 +708,8 @@ def test_enrich_candidate_logs_socialdata_cost_even_when_grok_fails(monkeypatch)
     client = _mock_client(lambda req: httpx.Response(401, text="invalid"))
     cost_calls = []
 
-    def stub_logger(handle, tweet_count, grok_usage=None):
-        cost_calls.append((handle, tweet_count, grok_usage))
+    def stub_logger(handle, tweet_count, grok_usage=None, client_id=None):
+        cost_calls.append((handle, tweet_count, grok_usage, client_id))
 
     with pytest.raises(grok_api.GrokAuthError):
         grok_api.enrich_candidate(
@@ -718,7 +719,40 @@ def test_enrich_candidate_logs_socialdata_cost_even_when_grok_fails(monkeypatch)
             cost_logger=stub_logger,
         )
     # Only phase 1 (SocialData) fired; phase 2 (Grok) never reached.
-    assert cost_calls == [("alice", 3, None)]
+    assert cost_calls == [("alice", 3, None, None)]
+
+
+def test_enrich_candidate_propagates_client_id_to_cost_logger(monkeypatch):
+    """When the wizard route passes client_id (e.g. "solstitch"), it must
+    reach the cost_logger on BOTH phases so cost_events rows attribute
+    spend to the right org instead of routing to ``_external``."""
+    monkeypatch.setenv("XAI_API_KEY", "x-test")
+    # Same usage-bearing xAI response shape as the two-phase test above.
+    payload = {
+        "choices": [{"message": {"content": json.dumps(GOOD_ENRICHMENT)}}],
+        "usage": {
+            "prompt_tokens": 100,
+            "completion_tokens": 50,
+            "total_tokens": 150,
+        },
+    }
+    client = _mock_client(lambda req: httpx.Response(200, json=payload))
+    cost_calls = []
+
+    def stub_logger(handle, tweet_count, grok_usage=None, client_id=None):
+        cost_calls.append((handle, tweet_count, grok_usage, client_id))
+
+    grok_api.enrich_candidate(
+        handle="alice", persona="arf", project_context="",
+        bank_signal=_bank_signal(), client=client,
+        socialdata_fetcher=_stub_fetcher(tweet_count=2),
+        cost_logger=stub_logger,
+        client_id="solstitch",
+    )
+    assert len(cost_calls) == 2
+    # Phase 1 (SocialData) and Phase 2 (Grok) both carry client_id.
+    assert cost_calls[0][3] == "solstitch"
+    assert cost_calls[1][3] == "solstitch"
 
 
 def test_compute_grok_cost_usd_uses_published_rates():

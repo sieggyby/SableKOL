@@ -209,6 +209,7 @@ def enrich_candidate_endpoint(
             persona=body.persona,
             project_context=body.project_context,
             bank_signal=body.bank_signal,
+            client_id=body.client_id,
         )
     except GrokPersonaPlaceholderError as e:
         raise HTTPException(

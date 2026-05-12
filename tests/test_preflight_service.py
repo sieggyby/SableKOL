@@ -540,11 +540,12 @@ def test_enrich_unconfigured_token_503(monkeypatch):
 def test_enrich_happy(app_client, monkeypatch):
     captured = {}
 
-    def fake_enrich(*, handle, persona, project_context, bank_signal):
+    def fake_enrich(*, handle, persona, project_context, bank_signal, client_id=None):
         captured["handle"] = handle
         captured["persona"] = persona
         captured["project_context"] = project_context
         captured["bank_signal"] = bank_signal
+        captured["client_id"] = client_id
         return _fake_enrichment()
 
     monkeypatch.setattr(
@@ -562,6 +563,7 @@ def test_enrich_happy(app_client, monkeypatch):
                 "tier": "B",
                 "social_proximity_brokers": ["doreen", "punk6529"],
             },
+            "client_id": "solstitch",
         },
         headers={"X-Sable-Service-Token": TEST_TOKEN},
     )
@@ -572,6 +574,8 @@ def test_enrich_happy(app_client, monkeypatch):
     assert body["signal_metadata"]["source"] == "grok_xai_live"
     assert captured["persona"] == "arf"
     assert captured["bank_signal"].handle == "alice"
+    # client_id round-trips through the schema → service → enrich_candidate.
+    assert captured["client_id"] == "solstitch"
     assert captured["bank_signal"].social_proximity_brokers == ["doreen", "punk6529"]
 
 

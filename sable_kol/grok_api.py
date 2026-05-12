@@ -700,6 +700,7 @@ def _default_cost_logger(
     handle: str,
     tweet_count: int,
     grok_usage: dict | None = None,
+    client_id: str | None = None,
 ) -> None:
     """Log enrichment spend to ``cost_events``. Two-phase contract:
 
@@ -718,9 +719,11 @@ def _default_cost_logger(
     once before the Grok call (SocialData phase — guarantees the row
     even if Grok later fails) and once after (Grok phase, with usage).
 
-    Attribution: ``org_id=None`` routes to the ``_external`` sentinel.
-    Per-client attribution would require plumbing ``client_id`` through
-    EnrichmentRequest + the SableWeb route → sidecar boundary.
+    Attribution: ``client_id`` routes cost rows to the corresponding
+    org_id (e.g. "solstitch"). When ``None`` (CLI smoke calls,
+    pre-2026-05-12 wizard runs) falls back to ``_external`` sentinel.
+    `cost.record` handles either path, lazily creating the `_external`
+    org on first use.
 
     Failures are swallowed with a log warning so a transient DB issue
     can't take down enrichment. The enrichment value is in the
@@ -736,13 +739,13 @@ def _default_cost_logger(
                 billable_tweet_units = max(1, tweet_count)
                 cost_mod.record(
                     conn,
-                    org_id=None,
+                    org_id=client_id,
                     call_type="socialdata_enrich_profile",
                     cost_usd=0.0002,
                 )
                 cost_mod.record(
                     conn,
-                    org_id=None,
+                    org_id=client_id,
                     call_type="socialdata_enrich_tweets",
                     cost_usd=billable_tweet_units * 0.0002,
                 )
@@ -753,7 +756,7 @@ def _default_cost_logger(
                 ct = int(grok_usage.get("completion_tokens", 0) or 0)
                 cost_mod.record(
                     conn,
-                    org_id=None,
+                    org_id=client_id,
                     call_type="grok_enrich_call",
                     cost_usd=grok_cost,
                     model=GROK_MODEL,
@@ -773,6 +776,7 @@ def enrich_candidate(
     persona: PersonaSlug,
     project_context: str,
     bank_signal: CandidateBankSignal,
+    client_id: str | None = None,
     client: httpx.Client | None = None,
     timeout: float = 120.0,
     socialdata_fetcher=None,
@@ -823,7 +827,7 @@ def enrich_candidate(
     # is available.
     log_cost = cost_logger or _default_cost_logger
     try:
-        log_cost(h, len(live.tweets))
+        log_cost(h, len(live.tweets), None, client_id)
     except Exception as e:
         logger.warning("cost_logger raised for enrich(@%s): %s — proceeding", h, e)
 
@@ -852,7 +856,7 @@ def enrich_candidate(
     # Post-Grok: log the Grok cost row now that usage data is available.
     # Errors swallowed so cost telemetry can't block the enrichment value.
     try:
-        log_cost(h, len(live.tweets), grok_usage_holder or None)
+        log_cost(h, len(live.tweets), grok_usage_holder or None, client_id)
     except Exception as e:
         logger.warning(
             "cost_logger (grok phase) raised for enrich(@%s): %s — proceeding",

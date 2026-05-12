@@ -242,7 +242,15 @@ class CandidateBankSignal(BaseModel):
 
 
 class EnrichmentRequest(BaseModel):
-    """Inbound payload for the sidecar /enrich-candidate endpoint."""
+    """Inbound payload for the sidecar /enrich-candidate endpoint.
+
+    ``client_id`` is the Sable client the enrichment is on behalf of
+    (e.g. "solstitch", "tig"). Optional — when present, cost_events
+    rows attribute spend to that org instead of routing to the
+    ``_external`` sentinel. The SableWeb route knows clientId from the
+    URL path and plumbs it through; standalone CLI smoke calls can
+    omit it.
+    """
 
     model_config = ConfigDict(extra="forbid")
 
@@ -250,6 +258,7 @@ class EnrichmentRequest(BaseModel):
     persona: PersonaSlug
     project_context: str = Field(default="", max_length=600)
     bank_signal: CandidateBankSignal
+    client_id: str | None = None
 
 
 class LiveDataSource(BaseModel):
