@@ -613,6 +613,89 @@ def test_enrich_prompt_per_persona_includes_their_profile(persona, monkeypatch):
     assert p.display_name in prompt
 
 
+def test_enrich_candidate_logs_cost_with_correct_amounts(monkeypatch):
+    """Cost logger is called with the right billable units: 1 profile
+    fetch (always) + max(1, tweet_count) tweet units (per SocialData's
+    fair-use floor)."""
+    monkeypatch.setenv("XAI_API_KEY", "x-test")
+    client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
+    cost_calls = []
+
+    def stub_logger(handle: str, tweet_count: int) -> None:
+        cost_calls.append((handle, tweet_count))
+
+    grok_api.enrich_candidate(
+        handle="alice", persona="arf", project_context="",
+        bank_signal=_bank_signal(), client=client,
+        socialdata_fetcher=_stub_fetcher(tweet_count=3),
+        cost_logger=stub_logger,
+    )
+    # Cost logger called exactly once with the handle (normalized) +
+    # actual tweet count returned by the fetcher.
+    assert cost_calls == [("alice", 3)]
+
+
+def test_enrich_candidate_logs_cost_for_empty_tweet_pull(monkeypatch):
+    """Locked / quiet accounts return zero tweets; SocialData still
+    bills the per-request floor. The logger gets count=0 and is
+    expected to bill max(1, count) internally."""
+    monkeypatch.setenv("XAI_API_KEY", "x-test")
+    client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
+    cost_calls = []
+
+    def stub_logger(handle: str, tweet_count: int) -> None:
+        cost_calls.append((handle, tweet_count))
+
+    grok_api.enrich_candidate(
+        handle="alice", persona="arf", project_context="",
+        bank_signal=_bank_signal(), client=client,
+        socialdata_fetcher=_stub_fetcher(tweet_count=0),
+        cost_logger=stub_logger,
+    )
+    assert cost_calls == [("alice", 0)]
+
+
+def test_enrich_candidate_proceeds_when_cost_logger_raises(monkeypatch):
+    """Cost telemetry must never block the enrichment value reaching the
+    operator. A logger exception is logged and swallowed."""
+    monkeypatch.setenv("XAI_API_KEY", "x-test")
+    client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
+
+    def boom(handle: str, tweet_count: int) -> None:
+        raise RuntimeError("DB connection refused")
+
+    e = grok_api.enrich_candidate(
+        handle="alice", persona="arf", project_context="",
+        bank_signal=_bank_signal(), client=client,
+        socialdata_fetcher=_stub_fetcher(),
+        cost_logger=boom,
+    )
+    # Despite the logger raising, the enrichment still returns.
+    assert e.location == "NYC"
+
+
+def test_enrich_candidate_logs_cost_before_grok_failure(monkeypatch):
+    """SocialData was hit (cost incurred) even if Grok later fails —
+    the cost ledger must reflect that. Logger fires before the Grok call,
+    so a Grok auth failure doesn't suppress the cost entry."""
+    monkeypatch.setenv("XAI_API_KEY", "x-bad")
+    client = _mock_client(lambda req: httpx.Response(401, text="invalid"))
+    cost_calls = []
+
+    def stub_logger(handle: str, tweet_count: int) -> None:
+        cost_calls.append((handle, tweet_count))
+
+    with pytest.raises(grok_api.GrokAuthError):
+        grok_api.enrich_candidate(
+            handle="alice", persona="arf", project_context="",
+            bank_signal=_bank_signal(), client=client,
+            socialdata_fetcher=_stub_fetcher(),
+            cost_logger=stub_logger,
+        )
+    # Cost was logged even though Grok failed afterward.
+    assert cost_calls == [("alice", 3)]
+
+
 def test_enrich_candidate_5xx_succeeds_on_attempt_2(monkeypatch):
     monkeypatch.setenv("XAI_API_KEY", "x-test")
     monkeypatch.setattr(grok_api.time, "sleep", lambda _: None)

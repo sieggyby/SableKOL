@@ -60,6 +60,12 @@ def record(
       ``GET /twitter/followers/list`` (SolStitch follow-graph plan)
     * ``"socialdata_following_page"`` — one page of
       ``GET /twitter/friends/list`` (SolStitch follow-graph plan)
+    * ``"socialdata_enrich_profile"`` — KO-3 v2.5 enrichment profile
+      fetch (``GET /twitter/user/{handle}``)
+    * ``"socialdata_enrich_tweets"`` — KO-3 v2.5 enrichment timeline
+      fetch (``GET /twitter/user/{user_id}/tweets``); priced per result
+      returned with a per-request floor of $0.0002 (SocialData's fair-
+      use provision)
 
     The CALL_TYPE_PREFIX is prepended automatically.
     """

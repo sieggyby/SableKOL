@@ -658,6 +658,51 @@ Output the JSON object only.
 """
 
 
+def _default_cost_logger(handle: str, tweet_count: int) -> None:
+    """Log the SocialData spend for one enrichment to ``cost_events``.
+
+    Two rows per enrichment: one ``socialdata_enrich_profile`` (flat
+    $0.0002) and one ``socialdata_enrich_tweets`` (priced per result
+    with a per-request floor of $0.0002 — empty pages still bill the
+    floor per SocialData's fair-use provision, see ``socialdata_bulk``).
+
+    Attribution: ``org_id=None`` routes to the ``_external`` sentinel.
+    Per-client attribution would require plumbing ``client_id`` through
+    EnrichmentRequest + the SableWeb route → sidecar boundary; left for
+    a follow-up if cost-by-client rollups become needed.
+
+    Failures are swallowed with a log warning so a transient DB issue
+    can't take down enrichment. The enrichment value is in the
+    operator's hands either way — losing one cost row is cheap.
+    """
+    from sable_kol import cost as cost_mod
+    from sable_kol.db import open_db
+
+    # SocialData pricing per socialdata_bulk.py: $0.0002 per result on
+    # the tweets endpoint; empty pages still bill the per-request floor
+    # of $0.0002. So tweets cost is max(1, count) * 0.0002.
+    billable_tweet_units = max(1, tweet_count)
+    try:
+        with open_db() as conn:
+            cost_mod.record(
+                conn,
+                org_id=None,
+                call_type="socialdata_enrich_profile",
+                cost_usd=0.0002,
+            )
+            cost_mod.record(
+                conn,
+                org_id=None,
+                call_type="socialdata_enrich_tweets",
+                cost_usd=billable_tweet_units * 0.0002,
+            )
+    except Exception as e:
+        logger.warning(
+            "cost_events logging failed for enrich(@%s): %s — proceeding",
+            handle, e,
+        )
+
+
 def enrich_candidate(
     *,
     handle: str,
@@ -667,6 +712,7 @@ def enrich_candidate(
     client: httpx.Client | None = None,
     timeout: float = 120.0,
     socialdata_fetcher=None,
+    cost_logger=None,
 ) -> Enrichment:
     """Per-candidate Grok enrichment in service of operator-authored outreach.
 
@@ -706,6 +752,17 @@ def enrich_candidate(
     # before the Grok call so we don't waste $0.05+ on a fabricated draft.
     fetcher = socialdata_fetcher or fetch_live_signal
     live = fetcher(h)
+
+    # Log the SocialData spend before the Grok call so even a Grok
+    # failure leaves the cost ledger consistent (we DID hit SocialData).
+    log_cost = cost_logger or _default_cost_logger
+    try:
+        log_cost(h, len(live.tweets))
+    except Exception as e:
+        # Defensive — the default logger swallows its own failures, but
+        # a caller-injected logger might not. Don't let cost telemetry
+        # block enrichment.
+        logger.warning("cost_logger raised for enrich(@%s): %s — proceeding", h, e)
 
     # Step 2 — hand the verbatim material to Grok to interpret.
     api_key = _resolve_api_key()
