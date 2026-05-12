@@ -75,6 +75,29 @@ XAI_API_URL = "https://api.x.ai/v1/chat/completions"
 # response format still apply unchanged.
 GROK_MODEL = "grok-4-latest"
 
+# grok-4-latest pricing as of 2026-05. Verify periodically against xAI's
+# public pricing page — these change. Costs are per-token and converted
+# from xAI's $/1M-token quotes for arithmetic convenience.
+GROK_INPUT_COST_USD_PER_TOKEN = 5.0 / 1_000_000   # $5 per 1M input tokens
+GROK_OUTPUT_COST_USD_PER_TOKEN = 15.0 / 1_000_000  # $15 per 1M output tokens
+
+
+def _compute_grok_cost_usd(usage: dict | None) -> float:
+    """Compute the dollar cost of one xAI call from its usage block.
+
+    xAI's chat/completions response follows the OpenAI shape: ``usage``
+    carries ``prompt_tokens`` + ``completion_tokens``. Returns 0.0 if
+    usage is missing (we'd rather log a 0-cost row than guess).
+    """
+    if not isinstance(usage, dict):
+        return 0.0
+    pt = int(usage.get("prompt_tokens", 0) or 0)
+    ct = int(usage.get("completion_tokens", 0) or 0)
+    return (
+        pt * GROK_INPUT_COST_USD_PER_TOKEN
+        + ct * GROK_OUTPUT_COST_USD_PER_TOKEN
+    )
+
 FIXED_AXIS_LIBRARY = [
     "fashion",
     "luxury",
@@ -281,6 +304,7 @@ def _post_chat(
     client: httpx.Client | None,
     api_key: str,
     timeout: float,
+    usage_recorder=None,
 ) -> dict[str, Any]:
     """POST a single-turn chat completion. Returns the parsed JSON object the
     model emitted in ``choices[0].message.content``.
@@ -288,6 +312,13 @@ def _post_chat(
     Retries:
       * 5xx: 1 retry with 2s backoff
       * 429: 3 attempts with 1s, 2s, 4s backoff
+
+    ``usage_recorder`` (callable, optional) is invoked with the response's
+    ``usage`` dict (``{prompt_tokens, completion_tokens, ...}``) on a
+    successful call. Used by ``enrich_candidate`` to compute + log xAI
+    spend to ``cost_events``. Other callers can leave it None — their
+    Grok spend stays uninstrumented for now (this is a deliberate scope
+    choice; expand if needed).
     """
     body = {
         "model": GROK_MODEL,
@@ -344,6 +375,13 @@ def _post_chat(
                 raise GrokParseError(
                     f"xAI response shape unexpected: {payload}"
                 ) from e
+            # Record usage before parsing the content (so a parse failure
+            # doesn't suppress the cost row — we still paid for the call).
+            if usage_recorder is not None:
+                try:
+                    usage_recorder(payload.get("usage"))
+                except Exception as e:  # noqa: BLE001 — telemetry is best-effort
+                    logger.warning("usage_recorder raised: %s", e)
             try:
                 return json.loads(content)
             except json.JSONDecodeError as e:
@@ -658,18 +696,31 @@ Output the JSON object only.
 """
 
 
-def _default_cost_logger(handle: str, tweet_count: int) -> None:
-    """Log the SocialData spend for one enrichment to ``cost_events``.
+def _default_cost_logger(
+    handle: str,
+    tweet_count: int,
+    grok_usage: dict | None = None,
+) -> None:
+    """Log enrichment spend to ``cost_events``. Two-phase contract:
 
-    Two rows per enrichment: one ``socialdata_enrich_profile`` (flat
-    $0.0002) and one ``socialdata_enrich_tweets`` (priced per result
-    with a per-request floor of $0.0002 — empty pages still bill the
-    floor per SocialData's fair-use provision, see ``socialdata_bulk``).
+      * ``grok_usage=None`` → log SocialData rows only:
+          - ``socialdata_enrich_profile`` (flat $0.0002)
+          - ``socialdata_enrich_tweets`` (``max(1, tweet_count) * $0.0002``;
+            SocialData's per-request floor — empty pages still bill it)
+      * ``grok_usage=<dict>`` → log the Grok row only:
+          - ``grok_enrich_call`` with cost computed from
+            :func:`_compute_grok_cost_usd`. ``input_tokens`` and
+            ``output_tokens`` columns recorded for retrospective audit.
+            If usage block is empty / missing fields, cost_usd=0 but
+            the row is still logged so the attempt is visible.
+
+    ``enrich_candidate`` calls this twice per successful enrichment:
+    once before the Grok call (SocialData phase — guarantees the row
+    even if Grok later fails) and once after (Grok phase, with usage).
 
     Attribution: ``org_id=None`` routes to the ``_external`` sentinel.
     Per-client attribution would require plumbing ``client_id`` through
-    EnrichmentRequest + the SableWeb route → sidecar boundary; left for
-    a follow-up if cost-by-client rollups become needed.
+    EnrichmentRequest + the SableWeb route → sidecar boundary.
 
     Failures are swallowed with a log warning so a transient DB issue
     can't take down enrichment. The enrichment value is in the
@@ -678,24 +729,37 @@ def _default_cost_logger(handle: str, tweet_count: int) -> None:
     from sable_kol import cost as cost_mod
     from sable_kol.db import open_db
 
-    # SocialData pricing per socialdata_bulk.py: $0.0002 per result on
-    # the tweets endpoint; empty pages still bill the per-request floor
-    # of $0.0002. So tweets cost is max(1, count) * 0.0002.
-    billable_tweet_units = max(1, tweet_count)
     try:
         with open_db() as conn:
-            cost_mod.record(
-                conn,
-                org_id=None,
-                call_type="socialdata_enrich_profile",
-                cost_usd=0.0002,
-            )
-            cost_mod.record(
-                conn,
-                org_id=None,
-                call_type="socialdata_enrich_tweets",
-                cost_usd=billable_tweet_units * 0.0002,
-            )
+            if grok_usage is None:
+                # Phase 1: SocialData rows.
+                billable_tweet_units = max(1, tweet_count)
+                cost_mod.record(
+                    conn,
+                    org_id=None,
+                    call_type="socialdata_enrich_profile",
+                    cost_usd=0.0002,
+                )
+                cost_mod.record(
+                    conn,
+                    org_id=None,
+                    call_type="socialdata_enrich_tweets",
+                    cost_usd=billable_tweet_units * 0.0002,
+                )
+            else:
+                # Phase 2: Grok row.
+                grok_cost = _compute_grok_cost_usd(grok_usage)
+                pt = int(grok_usage.get("prompt_tokens", 0) or 0)
+                ct = int(grok_usage.get("completion_tokens", 0) or 0)
+                cost_mod.record(
+                    conn,
+                    org_id=None,
+                    call_type="grok_enrich_call",
+                    cost_usd=grok_cost,
+                    model=GROK_MODEL,
+                    input_tokens=pt,
+                    output_tokens=ct,
+                )
     except Exception as e:
         logger.warning(
             "cost_events logging failed for enrich(@%s): %s — proceeding",
@@ -753,19 +817,24 @@ def enrich_candidate(
     fetcher = socialdata_fetcher or fetch_live_signal
     live = fetcher(h)
 
-    # Log the SocialData spend before the Grok call so even a Grok
-    # failure leaves the cost ledger consistent (we DID hit SocialData).
+    # Log SocialData spend BEFORE the Grok call so SocialData spend is
+    # captured even if Grok later fails (we DID hit SocialData). The Grok
+    # usage row is logged in a separate post-Grok call once usage data
+    # is available.
     log_cost = cost_logger or _default_cost_logger
     try:
         log_cost(h, len(live.tweets))
     except Exception as e:
-        # Defensive — the default logger swallows its own failures, but
-        # a caller-injected logger might not. Don't let cost telemetry
-        # block enrichment.
         logger.warning("cost_logger raised for enrich(@%s): %s — proceeding", h, e)
 
     # Step 2 — hand the verbatim material to Grok to interpret.
     api_key = _resolve_api_key()
+    grok_usage_holder: dict = {}
+
+    def _capture_usage(usage):
+        if isinstance(usage, dict):
+            grok_usage_holder.update(usage)
+
     raw = _post_chat(
         prompt=_build_enrich_candidate_prompt(
             handle=h,
@@ -777,7 +846,18 @@ def enrich_candidate(
         client=client,
         api_key=api_key,
         timeout=timeout,
+        usage_recorder=_capture_usage,
     )
+
+    # Post-Grok: log the Grok cost row now that usage data is available.
+    # Errors swallowed so cost telemetry can't block the enrichment value.
+    try:
+        log_cost(h, len(live.tweets), grok_usage_holder or None)
+    except Exception as e:
+        logger.warning(
+            "cost_logger (grok phase) raised for enrich(@%s): %s — proceeding",
+            h, e,
+        )
 
     # Coerce common Grok variances (None → empty, missing keys → defaults)
     # before Pydantic validation, so a partially-populated payload still

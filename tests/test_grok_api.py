@@ -613,16 +613,32 @@ def test_enrich_prompt_per_persona_includes_their_profile(persona, monkeypatch):
     assert p.display_name in prompt
 
 
-def test_enrich_candidate_logs_cost_with_correct_amounts(monkeypatch):
-    """Cost logger is called with the right billable units: 1 profile
-    fetch (always) + max(1, tweet_count) tweet units (per SocialData's
-    fair-use floor)."""
+def test_enrich_candidate_logs_cost_two_phase_socialdata_then_grok(monkeypatch):
+    """Cost logger is called twice per successful enrichment:
+      Phase 1 (pre-Grok): SocialData spend with grok_usage=None
+      Phase 2 (post-Grok): Grok spend with grok_usage=usage_dict from xAI
+
+    Two-phase guarantees SocialData spend lands even if Grok fails, AND
+    the Grok cost row has real token data attached."""
     monkeypatch.setenv("XAI_API_KEY", "x-test")
-    client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
+    # xAI response with the usage block (OpenAI-compat shape) so the
+    # phase-2 logger call sees real token counts.
+    def _xai_response_with_usage(content_dict):
+        payload = {
+            "choices": [{"message": {"content": json.dumps(content_dict)}}],
+            "usage": {
+                "prompt_tokens": 4000,
+                "completion_tokens": 600,
+                "total_tokens": 4600,
+            },
+        }
+        return httpx.Response(200, json=payload)
+
+    client = _mock_client(lambda req: _xai_response_with_usage(GOOD_ENRICHMENT))
     cost_calls = []
 
-    def stub_logger(handle: str, tweet_count: int) -> None:
-        cost_calls.append((handle, tweet_count))
+    def stub_logger(handle, tweet_count, grok_usage=None):
+        cost_calls.append((handle, tweet_count, grok_usage))
 
     grok_api.enrich_candidate(
         handle="alice", persona="arf", project_context="",
@@ -630,21 +646,27 @@ def test_enrich_candidate_logs_cost_with_correct_amounts(monkeypatch):
         socialdata_fetcher=_stub_fetcher(tweet_count=3),
         cost_logger=stub_logger,
     )
-    # Cost logger called exactly once with the handle (normalized) +
-    # actual tweet count returned by the fetcher.
-    assert cost_calls == [("alice", 3)]
+    assert len(cost_calls) == 2
+    # Phase 1: SocialData only — grok_usage=None
+    assert cost_calls[0] == ("alice", 3, None)
+    # Phase 2: Grok — grok_usage carries the token counts
+    assert cost_calls[1][0] == "alice"
+    assert cost_calls[1][1] == 3  # tweet_count echoed for context
+    assert cost_calls[1][2] is not None
+    assert cost_calls[1][2]["prompt_tokens"] == 4000
+    assert cost_calls[1][2]["completion_tokens"] == 600
 
 
 def test_enrich_candidate_logs_cost_for_empty_tweet_pull(monkeypatch):
     """Locked / quiet accounts return zero tweets; SocialData still
-    bills the per-request floor. The logger gets count=0 and is
-    expected to bill max(1, count) internally."""
+    bills the per-request floor. Logger gets count=0; phase-1 default
+    logger applies the max(1, count) flooring internally."""
     monkeypatch.setenv("XAI_API_KEY", "x-test")
     client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
     cost_calls = []
 
-    def stub_logger(handle: str, tweet_count: int) -> None:
-        cost_calls.append((handle, tweet_count))
+    def stub_logger(handle, tweet_count, grok_usage=None):
+        cost_calls.append((handle, tweet_count, grok_usage))
 
     grok_api.enrich_candidate(
         handle="alice", persona="arf", project_context="",
@@ -652,16 +674,18 @@ def test_enrich_candidate_logs_cost_for_empty_tweet_pull(monkeypatch):
         socialdata_fetcher=_stub_fetcher(tweet_count=0),
         cost_logger=stub_logger,
     )
-    assert cost_calls == [("alice", 0)]
+    # Two calls (phase 1 + phase 2) even with no tweets.
+    assert len(cost_calls) == 2
+    assert cost_calls[0] == ("alice", 0, None)
 
 
 def test_enrich_candidate_proceeds_when_cost_logger_raises(monkeypatch):
     """Cost telemetry must never block the enrichment value reaching the
-    operator. A logger exception is logged and swallowed."""
+    operator. Either phase's logger exception is logged and swallowed."""
     monkeypatch.setenv("XAI_API_KEY", "x-test")
     client = _mock_client(lambda req: _xai_response(GOOD_ENRICHMENT))
 
-    def boom(handle: str, tweet_count: int) -> None:
+    def boom(handle, tweet_count, grok_usage=None):
         raise RuntimeError("DB connection refused")
 
     e = grok_api.enrich_candidate(
@@ -670,20 +694,21 @@ def test_enrich_candidate_proceeds_when_cost_logger_raises(monkeypatch):
         socialdata_fetcher=_stub_fetcher(),
         cost_logger=boom,
     )
-    # Despite the logger raising, the enrichment still returns.
+    # Despite the logger raising on BOTH phases, the enrichment still returns.
     assert e.location == "NYC"
 
 
-def test_enrich_candidate_logs_cost_before_grok_failure(monkeypatch):
-    """SocialData was hit (cost incurred) even if Grok later fails —
-    the cost ledger must reflect that. Logger fires before the Grok call,
-    so a Grok auth failure doesn't suppress the cost entry."""
+def test_enrich_candidate_logs_socialdata_cost_even_when_grok_fails(monkeypatch):
+    """SocialData was hit (cost incurred) even if Grok later fails. Phase-1
+    logger fires before the Grok call, so a Grok auth failure doesn't
+    suppress the SocialData cost entry. Phase 2 doesn't fire because the
+    Grok exception propagates."""
     monkeypatch.setenv("XAI_API_KEY", "x-bad")
     client = _mock_client(lambda req: httpx.Response(401, text="invalid"))
     cost_calls = []
 
-    def stub_logger(handle: str, tweet_count: int) -> None:
-        cost_calls.append((handle, tweet_count))
+    def stub_logger(handle, tweet_count, grok_usage=None):
+        cost_calls.append((handle, tweet_count, grok_usage))
 
     with pytest.raises(grok_api.GrokAuthError):
         grok_api.enrich_candidate(
@@ -692,8 +717,22 @@ def test_enrich_candidate_logs_cost_before_grok_failure(monkeypatch):
             socialdata_fetcher=_stub_fetcher(),
             cost_logger=stub_logger,
         )
-    # Cost was logged even though Grok failed afterward.
-    assert cost_calls == [("alice", 3)]
+    # Only phase 1 (SocialData) fired; phase 2 (Grok) never reached.
+    assert cost_calls == [("alice", 3, None)]
+
+
+def test_compute_grok_cost_usd_uses_published_rates():
+    """Sanity-check the per-token pricing math. grok-4-latest rates as of
+    2026-05: $5 per 1M input tokens + $15 per 1M output tokens. Confirms
+    the constants in grok_api.py haven't silently drifted (bump them in
+    one place — the test catches a missed pricing-page sync)."""
+    cost = grok_api._compute_grok_cost_usd(
+        {"prompt_tokens": 1_000_000, "completion_tokens": 1_000_000}
+    )
+    assert cost == pytest.approx(20.0)  # $5 + $15 for a 1M+1M token call
+    # Zero usage → zero cost (don't guess when xAI omits the block).
+    assert grok_api._compute_grok_cost_usd(None) == 0.0
+    assert grok_api._compute_grok_cost_usd({}) == 0.0
 
 
 def test_enrich_candidate_5xx_succeeds_on_attempt_2(monkeypatch):
