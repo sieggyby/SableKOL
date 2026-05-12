@@ -6,6 +6,50 @@ For active work, see `TODO.md`. For design rationale, see `docs/any_project_wiza
 
 ---
 
+## 2026-05-12 — KO-5: backfill SocialData verification on historical kol_candidates
+
+The TODO's premise was that ~10% of the ~22k bank rows came from Grok's `suggest_comparable_projects` path and were trusted on Grok's self-reported `handle_verified=true` (which empirically lies). Reality on prod:
+
+- Bank size is 16,647 active rows, not ~22k.
+- **None** of the known hallucinated handles (`bittensor_`, `eleutherai`, `gensynnetwork`) ever made it to `kol_candidates` — they stayed in wizard `comparison_handles` (job config) and didn't get promoted.
+- Hallucination rate in the actual bank: ~0.5% (1 row in 200-row sample of the `unverified` filter).
+
+The script `scripts/backfill_handle_verification.py` ships with three filter tiers (`risky` / `unverified` / `all`) so the same tool covers the highest-risk subset cheaply + the full sweep when warranted. Defaults to dry-run; `--apply` writes. Outcomes per row:
+
+- **alive**: SocialData returns 200 with profile data → no-op
+- **not_found**: 404/410 or 200-with-status-error → soft-archive (`status='archived'`), append `kol_graph:archived_by_ko5:<date>:not_found` tag to `discovery_sources_json` so the change is identifiable + reversible
+- **suspended**: 200-with-suspension-message → same archive action
+- **error**: network / 5xx after retries / parse failure → fail-open, no archive (don't lose real handles to SocialData weather)
+
+Each archive also writes to `audit_log` via `sable_platform.db.audit.log_audit` (actor=`ko5_backfill_script`, action=`archive_candidate`, detail carries verdict + SocialData reason). The signature mismatch I hit on first apply (`entity_type` / `metadata` were wrong kwargs vs `entity_id` / `detail`) is fixed in the committed script.
+
+**Risky-filter apply (prod, 2026-05-12).** 7 candidates checked, 6 alive, 1 hallucinated → archived: `@convexocal` (cid=3448). Reused SocialData spend: $0.0014. The original sources (`manual:9dcc_arf_mutuals_2026_05_06`, `list:operator:9dcc_arf_mutuals_2026_05_06`) preserved alongside the new archive tag.
+
+**Broader sweep deferred.** The `unverified` filter (3,640 rows) and `all` filter (16,647 rows) are scope-flexible from the same script — operator runs them at their discretion. Extrapolated impact at 0.5% rate: ~18 dropped from `unverified` (~$0.73 spend, ~50min runtime sequential), ~80 dropped from `all` (~$3.33 spend, ~3.7h runtime). Both well within the original $2 budget and the script's safety guarantees (audit log + reversible via the `kol_graph:archived_by_ko5:*` source tag).
+
+Tests: SableKOL 345/345 (was 334, +11 KO-5 coverage on classify verdicts / filter SQL / archive semantics).
+
+---
+
+## 2026-05-12 — Cost telemetry for v2.5 enrichment (observability gap)
+
+KO-3 v2.5 introduced a recurring SocialData spend (~$0.0042 per enrichment) but the new path never booked any of it to `cost_events`. Existing socialdata_bulk paths log via `cost_mod.record`; the new v2.5 fetch path silently bled the SocialData balance and would only have surfaced when balance hit 0.
+
+Commit `264d114` adds an injectable `cost_logger` kwarg to `enrich_candidate` with a default that opens a DB conn via `sable_kol.db.open_db()` and writes two cost rows per enrichment:
+
+- `sablekol.socialdata_enrich_profile` — flat $0.0002
+- `sablekol.socialdata_enrich_tweets` — `max(1, tweet_count) * $0.0002` (SocialData's fair-use floor — empty pages still bill the per-request floor)
+
+Logging fires AFTER the SocialData fetch returns but BEFORE the Grok call, so a Grok auth failure or 502 doesn't suppress the cost entry (SocialData was actually hit; ledger reflects it). Logger exceptions are swallowed with a warning so cost telemetry can't block enrichment value reaching the operator.
+
+Attribution: routes to the `_external` sentinel org for now. Per-client attribution would require plumbing `client_id` through `EnrichmentRequest` + the SableWeb route → sidecar boundary; deferred until cost-by-client rollups become operationally needed.
+
+Verified live in prod: pre-enrich row counts for `sablekol.socialdata_enrich_*` were 0; one real enrichment triggered, post-counts are exactly 1 + 1.
+
+Tests: SableKOL 334/334 (was 330, +4 cost-logger coverage including: logger called with normalized handle + actual count; empty pull still calls logger with count=0; logger exception swallowed; logger fires even when Grok later fails).
+
+---
+
 ## 2026-05-11 — KO-6 + KO-7: kingmaker enrichment + sidecar SocialData fallback
 
 Two post-launch ops fixes batched.

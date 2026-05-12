@@ -5,7 +5,7 @@
 **For shipped work**, see [`docs/AUDIT_LOG.md`](docs/AUDIT_LOG.md).
 **For design rationale of the any-project wizard**, see [`docs/any_project_wizard_plan.md`](docs/any_project_wizard_plan.md).
 
-**Last updated:** 2026-05-10 — KO-3 + KO-1.b shipped end-to-end (SableKOL Phase 0–2 + SableWeb Phase 3 + deploy/docs Phase 4). See `docs/AUDIT_LOG.md` for the full landing entry. Only KO-4 (paid bank source expansion) remains open.
+**Last updated:** 2026-05-12 — KO-5 / KO-6 / KO-7 all shipped (see `docs/AUDIT_LOG.md`). Only KO-4 (deferred) remains.
 
 ---
 
