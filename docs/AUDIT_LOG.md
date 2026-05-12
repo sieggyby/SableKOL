@@ -6,7 +6,82 @@ For active work, see `TODO.md`. For design rationale, see `docs/any_project_wiza
 
 ---
 
-## 2026-05-10 — KO-3 + KO-1.b: per-candidate Grok cold-intro drafter
+## 2026-05-11 — KO-6 + KO-7: kingmaker enrichment + sidecar SocialData fallback
+
+Two post-launch ops fixes batched.
+
+### KO-6 — Lazy-upsert graph-only handles into `kol_candidates` on enrich
+- **Problem.** After the KOLTagPanel render-guard expanded from `node.role === "candidate"` to `!node.is_org && !node.is_celeb` (so kingmaker and cohort nodes also got the enrich button), clicking a red kingmaker node 404'd. Root cause: the route resolved handles via `leads.json` only, but kingmaker/cohort handles live in `kol_follow_edges` (written by `bulk-fetch`), never promoted to first-class `kol_candidates` rows by any existing path.
+- **Fix.** SableWeb commit `4d17c8a`. Replaced the single leads.json lookup in the route's `resolveCandidateId` with a tiered fallback: leads.json → `kol_candidates` by handle → `kol_follow_edges` filtered by `client_id` → 404 `handle_not_in_graph`. The follow-edges hit triggers a lazy `INSERT … ON CONFLICT DO NOTHING` into `kol_candidates` with `discovery_sources=["kol_graph:<client>:<date>"]` so the row is identifiable in future cleanup passes. Race-safe (loser of a concurrent click reads the winner's row).
+- **Notable side effect.** The route no longer hard-503s when the leads file is unavailable (fresh client, never regenerated) — it falls through to tiers 2/3. Only when *every* tier misses do we 404, and the error message names which gap applies.
+- **Client-scoping.** The follow-edges JOIN against `kol_extract_runs.client_id` ensures we never lazy-upsert a handle that another client's bulk-fetch surveyed.
+- **Tests.** SableWeb 205/205 (was 201, +4 KO-6 coverage). Mirror TODO `SW-KOL-ENRICH-AUTOPROMOTE`.
+
+### KO-7 — Sidecar httpx fallback when Slopper isn't installed
+- **Problem.** `Dockerfile.preflight` deliberately ships only the `[service]` extra (FastAPI + uvicorn + psycopg2-binary) to keep the sidecar image lean. That meant Slopper (the `sable` package) wasn't available, and `sable_kol.socialdata_bulk._default_profile_fetcher` raised `ModuleNotFoundError: No module named 'sable'` at runtime. Blocked autonomous `bulk-fetch` + regenerate from the sidecar; operator had to SSH-tunnel from a laptop with Slopper installed.
+- **Fix.** SableKOL commit `3c8e026`. Added an in-repo `_httpx_socialdata_get` helper with retry semantics matching Slopper's wrapper exactly (5 attempts on 429/5xx/transport, exponential backoff with jitter, 402 → `BalanceExhaustedError`, non-retryable 4xx → fail fast). `_default_profile_fetcher` and `_default_path_fetcher` try Slopper first (laptop dev unchanged) and fall through to the httpx path on `ImportError` (sidecar prod takes this branch).
+- **Tests.** SableKOL 330/330 (was 322, +8 KO-7 coverage). Smoke proof on prod: `docker exec sable-web-sable-kol-preflight-1 python -c "from sable_kol.socialdata_bulk import _default_profile_fetcher; print(_default_profile_fetcher('CahitArf11'))"` returns Arf's real profile via the httpx path.
+
+---
+
+## 2026-05-10 — KO-3 v2.5: Grok confabulation killed via SocialData backbone
+
+The v2 design ("Grok uses live X search to read the candidate's timeline") was built on a false premise: `grok-4-latest` does **not** have reliable real-time X access. Live test surfaced verbatim admission:
+
+> "Unable to access live X timeline due to lack of real-time internet access."
+> "As an AI, I do not have real-time access to X (Twitter) to pull live tweets."
+
+So all the v2 "live X mutual lookup" + "live X bio + recent posts" prompts were producing confabulated content from Grok's training corpus, dressed up as live reads. Hallucinated mutuals like `techinnovators` and `creativeminds` were leaking through to operators. Sieggy's existing `feedback_grok_handle_verification.md` memory had documented the *handle-existence* hallucination pattern; KO-3 v2 extended the problem to a much richer surface.
+
+### Architecture swap
+Real material now comes from SocialData; Grok's job is **interpretation**, not search.
+
+- New `sable_kol/socialdata_live.py` — in-repo httpx fetcher (same pattern as `handle_verifier.py`; no Slopper dep). Three public functions: `fetch_profile`, `fetch_recent_tweets`, `fetch_live_signal` (chains them). Typed errors: `LiveDataHandleNotFoundError` / `LiveDataBalanceExhaustedError` / `LiveDataUnavailableError`, each mapping to a distinct sidecar HTTP status.
+- **Gotcha discovered live + documented in the module.** SocialData's `/twitter/user/<screen_name>/tweets` endpoint 404s on screen names. Only `/twitter/user/<numeric_id>/tweets` works. `fetch_live_signal` resolves the `id_str` via the profile endpoint first, then uses it for the tweet pull. The public API for `fetch_recent_tweets(user_id, …)` takes the numeric ID explicitly.
+- `grok_api.py::enrich_candidate` gained an injectable `socialdata_fetcher` kwarg (defaults to `fetch_live_signal`). Live data fetched **before** the Grok call so we don't waste $0.05+ on a fabricated draft if SocialData is unavailable.
+- Prompt rewritten — all "use live X search" language deleted. Instead Grok receives a Markdown-rendered tweet block (`[1. post] text`, `[2. reply → @X] text`, `[3. retweet ↻ @Y] text`) + canonical profile block + ground-truth boilerplate ("Do NOT speculate beyond what's visible in these tweets").
+- `Enrichment` schema gained `live_data_source: LiveDataSource | None` provenance — `{provider, fetched_at_utc, tweet_count, profile_present}` — so operator UI can distinguish a real-data enrichment from a sparse-fallback one.
+- Sidecar maps the new errors: `LiveDataHandleNotFoundError → 404 handle_not_found`; `LiveDataBalanceExhaustedError → 503 socialdata_balance_exhausted`; `LiveDataUnavailableError → 503 live_data_unavailable`. **No fallback to "Grok-only" mode** — KO-3 v2.5 was specifically designed to avoid that.
+
+### Quality delta (smoke result)
+Sparta researching Arf (commit `47aed4a`) — v2.5 commonality cites specific verbatim tweets including Arf's "rhizome / cult / brand" community typology and "synthetic dopamine" framings, with mutuals extracted from actual @-mentions in the timeline. v2 would have hallucinated mutuals like `@doreen` and `@punk6529` from prompt-context inference.
+
+### Cost
+~$0.05 Grok + ~$0.004 SocialData per enrichment. Real, predictable, billable to `cost_events` (though enrichment-specific cost tracking is a known gap; see TODO).
+
+### Tests
+SableKOL 322/322 (was 303; +13 socialdata_live + 3 sidecar error mapping + happy-path coverage updates). SableWeb 201/201 unchanged.
+
+---
+
+## 2026-05-10 — Persona overhaul: drop sieggy, add Alex Malone, ground profiles
+
+Two grouped persona-table changes plus an architectural follow-on, all from the same multi-hour live-iteration session.
+
+### KO-3 v2 — From "Grok writes the DM" to "Grok writes intel" (initial design)
+- **Operator feedback on KO-3 v1 (the morning's cold-intro drafter):** "The DM it wrote was trash. Absolutely embarrassing cringe shit." 1-shot acknowledgment that the cold-DM surface was the wrong feature. The right thing per the original memory `project_sablekol_grok_enrichment.md`: cold-intro **notes** the operator reads, not a drafted opener.
+- **Redesign.** Grok output reshaped from `{intro_text, suggested_angle}` to structured intel: `{location, bio_snapshot, recent_themes, likes, dislikes, communities, notable_mutuals, top_tweets}` + prose blocks `commonality_with_operator` + `commentary`. UI replaced the "Draft cold-intro" button with an always-visible cached intel block (auto-loads on panel mount via GET; POST forces fresh + re-bills).
+- **Schema changes.** SableKOL `CandidateIntroSignal/ColdIntroRequest/ColdIntroDraft` → `CandidateBankSignal/EnrichmentRequest/Enrichment`. SableWeb route GET-POST split; new SablePlatform migration `041_kol_enrichment` for the per-`(candidate_id, operator_email)` cache. Quota dropped from 50/op/24h to 10/op/24h (live X was assumed costlier — turned out to be a v2.5 finding that this premise was wrong anyway).
+- **Sieggy removed.** Sieggy runs project setup but doesn't author cold outreach. His email stays on `KOL_CREATE_EMAILS` for project creation; `operatorPersonaForEmail("siegby@gmail.com")` returns `null` so his login never sees the enrichment block. Hard-deleted from `PersonaSlug` Literal + `PERSONAS` dict.
+
+### Alex Malone added (`alex@arkn.io` / `@CreateTheDots` → `alex`)
+- Added to `KOL_CREATE_EMAILS` (SableWeb commit `56ddd2b`), mapped to new `alex` persona slug.
+- Initial profile (`d9e2f65`) was Grok-research-based and weak — most fields were `<TBD>` stubs because Grok's research returned thin signal (the same confabulation pattern that prompted v2.5). Notable hallucination: my earlier Grok search high-confidence-claimed `@0xSparta` as Sparta's X handle when the real handle is `@0x_Asuka`.
+
+### Arf full persona via grill-me (commit `d9e2f65`)
+- One-field-at-a-time interview with Sieggy filling in. Captured load-bearing nuance the original placeholder missed: "history major and MBA but credentialism is antithetical to Arf's essence", "Arf might say he's a storyteller, but he'd never tweet that", themes spanning `crypto / stocks / tech / sports / music / off-beat film / memes / monad memes / AI / LLM research / politics`, real mutuals (`p0isonxs`, `0xWoah`, `monasex_1`, `billmondays`, `0xDaes`).
+- **Schema change.** Added `twitter_handle` field to `PersonaPriming` — distinct from `display_name` because operator slugs / display names rarely match X handles (Arf's X handle is `@CahitArf11`, not `@arf`). The earlier prompt was inviting Grok to look for mutuals of `@arf`, which matched nothing.
+- Bumped `bio` cap 300 → 800 chars, `themes` cap 6 → 10, `communities` cap 6 → 10.
+
+### Sparta + Alex grounded from real SocialData timelines (commit `47aed4a`)
+- Once v2.5 SocialData fetch worked, I pulled 30 recent tweets for both and rewrote both profiles from observation.
+- **Sparta** (`@0x_Asuka`): verbatim X bio `"Web3 researcher since 2017. VC since 2020. Transhumanist Gnostic. Mana-Sama fan account. ○"`. Display `Sparta (𝔦, 𝔦)` — the imaginary-unit pair as a math/transhuman sigil. TIG-leadership-adjacent: hosts AMAs with `@Dr_JohnFletcher`, uses `we/our` about the protocol. Mixes thesis-poster TIG evangelism with Mana-Sama Mondays + Evangelion's Magi multi-agent-superintelligence references.
+- **Alex** (`@CreateTheDots` / `Ale𝕏`): verbatim X bio `"Collaborations in Science & Tech"`. ~80% of recent timeline is `@tigfoundation` retweets. When he posts originally: world-shifting / humanity's-future framing of TIG. Longevity-curious — replied to `@bryan_johnson` framing Don't Die + TIG as "natural bedfellows (in a room with perfect temperature, blackout blinds and a low RHR)".
+- Both still non-`placeholder` so the enrichment route allows them, but Grok now has real persona context + real candidate tweets to compute commonality from. Smoke result for Sparta-researching-Alex named specific shared mutuals (`@tigfoundation`, `@Dr_JohnFletcher`) and concrete shared themes (algorithmic-innovation-vs-hardware-scaling).
+
+---
+
+## 2026-05-10 — KO-3 v1: per-candidate Grok cold-intro drafter (shipped + retired)
 
 End-to-end across SableKOL + SableWeb. The operator clicks a candidate node on `/ops/kol-network/<slug>`, gets a 2-3 line opener in their voice register, copies, edits, sends. Drafts are ephemeral, audited as attempts (50/operator/24h cap). KO-1.b (sidecar passthrough for the operator-priming preflight flags) bundled into the same shipping window per the v3 plan.
 
