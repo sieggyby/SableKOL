@@ -5,7 +5,7 @@
 **For shipped work**, see [`docs/AUDIT_LOG.md`](docs/AUDIT_LOG.md).
 **For design rationale of the any-project wizard**, see [`docs/any_project_wizard_plan.md`](docs/any_project_wizard_plan.md).
 
-**Last updated:** 2026-05-12 — KO-5 / KO-6 / KO-7 all shipped (see `docs/AUDIT_LOG.md`). Only KO-4 (deferred) remains.
+**Last updated:** 2026-05-13 — v2.5 close-out shipped (Grok cost tracking + per-client attribution + retired-route cleanup; see `docs/AUDIT_LOG.md`). Only KO-4 (deferred) remains.
 
 ---
 

@@ -6,6 +6,25 @@ For active work, see `TODO.md`. For design rationale, see `docs/any_project_wiza
 
 ---
 
+## 2026-05-13 — v2.5 close-out: Grok cost tracking + per-client attribution + retired-route cleanup
+
+Three commits closing out the v2.5 enrichment economics surface so cost rollups are accurate and per-client.
+
+### Grok cost tracking (commit `2b380e1`)
+The 2026-05-12 cost-telemetry pass logged SocialData spend but left the Grok side untracked — typical xAI call here is $0.02-0.05 (5-15× the SocialData portion) so the existing `_external` rollup understated KO-3 v2.5 spend by an order of magnitude. Fix: `grok_api._post_chat` now accepts a `usage_recorder` kwarg that fires once with `payload["usage"]` on a successful response. `_default_cost_logger` is two-phase — `grok_usage=None` → SocialData rows (as before); `grok_usage=<dict>` → one `sablekol.grok_enrich_call` row with `cost_usd` derived from token counts × per-token rate (`$5/M` input, `$15/M` output), `model` / `input_tokens` / `output_tokens` columns populated. Pricing constants are at module top so a future drift is one-line; a pinned test (`test_compute_grok_cost_usd_uses_published_rates`) catches silent drift.
+
+### Per-client cost attribution (commit `8cfe932` SableKOL + `801f7b2` SableWeb)
+2026-05-12's cost-telemetry entry called out the deferred work: "per-client attribution would require plumbing `client_id` through EnrichmentRequest + the SableWeb route → sidecar boundary." Shipped today. `EnrichmentRequest` (Pydantic) + `EnrichmentRequestSchema` (Zod) gain an optional `client_id`; SableWeb's `/api/ops/kol-network/[clientId]/enrich-candidate` route plumbs the URL path's `clientId` into the sidecar body; the sidecar passes it to `enrich_candidate` which hands it to `cost_logger` on both phases. Cost rows now write `org_id=<clientId>` (e.g. `solstitch`, `tig`) instead of `_external`. CLI smoke calls and back-compat callers that omit `client_id` continue to route to `_external` via `cost.record`'s existing fallback.
+
+### Retired-route cleanup (commit `2658541` SableWeb)
+KO-3 v1 (`/api/ops/kol-network/[clientId]/draft-intro`) was retired 2026-05-10 the same day it shipped; the route's audit-endpoint string constant `DRAFT_INTRO_AUDIT_ENDPOINT` lingered in `kol-create-audit.ts` "for historical audit-row lookups" but no live code reads it and the admin-approval queries match audit rows by literal string. Removed.
+
+Tests: SableKOL 351/351 (was 346, +1 client_id propagation test, +1 Grok pricing-pin test, +3 stub-sig refactors). SableWeb `api-kol-enrich-candidate` 19/19 + `tsc --noEmit` clean.
+
+Deploy: pending — sidecar container needs a rebuild before per-client attribution takes effect on prod.
+
+---
+
 ## 2026-05-12 — KO-5: backfill SocialData verification on historical kol_candidates
 
 The TODO's premise was that ~10% of the ~22k bank rows came from Grok's `suggest_comparable_projects` path and were trusted on Grok's self-reported `handle_verified=true` (which empirically lies). Reality on prod:
