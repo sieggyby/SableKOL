@@ -17,6 +17,16 @@ this. Wizard-created prospects therefore use:
 
 That keeps the schema honest and lets `sable-platform org list --status inactive`
 surface wizard-created prospects without a new column.
+
+**Canonical prospect-org creator (B-N1):** the SP-owned
+``sable_platform.db.orgs.upsert_prospect_org`` is now the canonical creator
+(same convention: ``status='inactive'`` + ``config_json.org_type='prospect'``).
+This wizard variant is kept deliberately rather than delegated because it
+**force-refreshes ``wizard_job_id`` on re-run** (the audit trail must point at the
+latest job), whereas the generic helper intentionally ``setdefault``s config keys to
+preserve operator-set state. Unify only if the generic helper grows a "force these
+keys" option. (The production wizard prospect-org INSERT is the TS mirror in
+``SableWeb/src/lib/kol-create-job.ts`` — neither this nor the generic helper unifies it.)
 """
 from __future__ import annotations
 

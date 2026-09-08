@@ -140,9 +140,9 @@ leads.json, kol_candidates by handle, OR the client's kol_follow_edges
 - Cached re-reads (GET) are free; only POSTs tick the quota.
 - Cost rows logged to `cost_events` as `sablekol.socialdata_enrich_profile`
   (flat $0.0002) + `sablekol.socialdata_enrich_tweets`
-  (`max(1, tweet_count) * $0.0002`). xAI Grok spend is currently uninstrumented
-  — a known gap; would mirror the existing Anthropic cost-logging pattern when
-  added.
+  (`max(1, tweet_count) * $0.0002`). xAI Grok enrichment spend is also logged
+  to `cost_events` (added 2026-05-13, mirroring the Anthropic cost-logging
+  pattern).
 
 ---
 
